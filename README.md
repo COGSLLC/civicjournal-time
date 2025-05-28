@@ -73,4 +73,8 @@ Each level can be configured with custom durations and roll-up thresholds.
 
 ## License
 
-Dual-licensed under MIT or Apache 2.0 at your option.
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
+
+### Commercial Licensing
+
+For proprietary or commercial use, alternative licensing options are available. Please contact the maintainers for more information.

@@ -3,7 +3,7 @@ edition = "2021"
 name = "civicjournal-time"
 version = "0.1.0"
 description = "A hierarchical time-series journal system using merkle-chains and pages for efficient historical state management"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 # Disable incremental compilation to avoid file locking issues
 [profile.dev]
