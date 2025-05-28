@@ -1,0 +1,139 @@
+## CivicJournal: Hierarchical Merkle-Chained Delta-Log
+
+### 1. Purpose & Key Differentiators
+
+A **Merkle-Chained Delta-Log** optimized for time-series civic data.
+
+* **Tamper-evident** via hash-chains (no consensus, no tokens).
+* **Hierarchical pages** map directly onto real-world time spans (minutes → hours → days → …).
+* **Efficient proofs & queries**: leaf-level inclusion, page-level summaries, full history replay.
+
+---
+
+### 2. Core Concepts
+
+| Concept                | Description                                            |
+| ---------------------- | ------------------------------------------------------ |
+| **Journal Leaf**       | A single “delta” (change) record for a container.      |
+| **Hash-Chain**         | Each leaf hashes and links to its predecessor.         |
+| **Journal Page**       | Batch of N leaves under one Merkle root.               |
+| **Page Chain**         | Pages themselves form a hash-chain of Merkle roots.    |
+| **Time Hierarchy**     | Pages grouped into fractal levels (minute→hour→day→…). |
+| **External Anchoring** | Periodic timestamping of each page’s root (RFC3161).   |
+
+---
+
+### 3. Time Hierarchy Levels
+
+Pages live in a fractal tree, each level aggregating its children:
+
+| Level | Granularity   | Seconds per Page |
+| ----- | ------------- | ---------------- |
+| 0     | Minute        | 60               |
+| 1     | Hour          | 3,600            |
+| 2     | Day           | 86,400           |
+| 3     | Month (\~30d) | 2,592,000        |
+| 4     | Year (\~365d) | 31,536,000       |
+| 5     | Decade        | 315,360,000      |
+| 6     | Century       | 3,153,600,000    |
+
+Child pages (“thralls”) roll up into parents at each boundary.
+
+---
+
+### 4. Data Structures
+
+```text
+struct JournalLeaf {
+  LeafID        // unique, incrementing
+  Timestamp     // e.g. 2025-06-01T12:00:00Z
+  PrevHash      // SHA256 of previous LeafHash
+  ContainerID   // “proposal:XYZ” or “user:ABC”
+  DeltaPayload  // JSON/YAML patch or full record
+  LeafHash      // SHA256(LeafID ∥ Timestamp ∥ PrevHash ∥ ContainerID ∥ DeltaPayload)
+}
+
+struct JournalPage {
+  PageID             // e.g. 42
+  Level              // time‐hierarchy level (0…6)
+  StartTime, EndTime // page time window
+  LeafHashes[]       // array of N LeafHash values
+  MerkleRoot         // root of Merkle-tree over LeafHashes[]
+  PrevPageHash       // SHA256 of prior JournalPage.PageHash
+  PageHash           // SHA256(PageID ∥ Level ∥ StartTime ∥ EndTime ∥ MerkleRoot ∥ PrevPageHash)
+  TSProof            // external timestamp proof for MerkleRoot
+  Thralls[]          // references to child PageIDs for deeper levels
+}
+```
+
+---
+
+### 5. Append & Flush Workflow
+
+1. **Append Leaf**
+
+   * Identify level-0 page by timestamp (minute slot).
+   * Compute `PrevHash`, then `LeafHash`.
+   * Persist leaf, buffer its hash in that page.
+
+2. **Flush Page** (on N leaves or after T seconds)
+
+   * Build Merkle tree over buffered `LeafHashes` → `MerkleRoot`.
+   * Compute `PageHash` (including level and time window).
+   * Anchor `MerkleRoot` via TSA/OpenTimestamps → `TSProof`.
+   * Persist `JournalPage`, clear buffer, propagate `PageHash` to parent’s buffer as a “thrall” hash.
+
+3. **Roll-up to Higher Levels**
+
+   * When all child pages for an hour (level 0 → 1) are flushed, their `PageHash` values become “delta entries” in the level-1 page buffer, and the same flush logic applies.
+
+---
+
+### 6. Verification & Queries
+
+* **Leaf Inclusion**
+  Verify a leaf’s `LeafHash` is in page P via its Merkle-proof path.
+
+* **Page-Chain Integrity**
+  Recompute each `PageHash` back to the oldest page at each level.
+
+* **Hierarchy Proof**
+  From any level-L page, prove consistency with level (L+1) parent by including the child page’s `PageHash` in the parent’s Merkle tree.
+
+* **State Replay**
+  Apply `DeltaPayload`s sequentially from a chosen starting leaf or page to reconstruct container state over time.
+
+* **Query Modes**
+
+  * Time-range: fetch leaves/pages by timestamp.
+  * Level-based: retrieve summaries (Merkle roots) without all raw deltas.
+  * Container-centric: filter leaves by `ContainerID`.
+
+---
+
+### 7. Why It’s Not a “Blockchain”
+
+| Blockchain Feature         | CivicJournal Behavior                |
+| -------------------------- | ------------------------------------ |
+| Fixed blocks & headers     | Flexible pages with start/end fields |
+| P2P consensus & tokens     | Single authority + no tokens         |
+| On-chain state & contracts | Off-chain DB state + no smart logic  |
+| Mining/incentives          | None—pure cryptographic chaining     |
+
+No blocks, no forks, no nodes: **just an auditable, hierarchical Merkle log**.
+
+---
+
+### 8. Storage & Formats
+
+* **Files:** each `JournalPage` → one JSON file (`page_<Level>_<PageID>.json`)
+* **Dirs:** `/journal/level_<L>/page_<ID>.json`
+* **Marker:** `.civicjournal-time` at repo root
+
+---
+
+### 9. References
+
+* **RFC 6962** – Certificate Transparency
+* **OpenTimestamps** – decentralized timestamping
+* **Google CT whitepaper** – Merkle-based transparency logs

@@ -1,0 +1,7 @@
+Time Hierarchy Demo Summary
+=========================
+Total hours: 72
+Total deltas: 73
+Output directory: ./time_hierarchy_demo
+Deltas saved to: ./time_hierarchy_demo/deltas
+Hierarchy snapshots saved to: ./time_hierarchy_demo/snapshots
