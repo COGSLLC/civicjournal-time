@@ -73,8 +73,25 @@ Each level can be configured with custom durations and roll-up thresholds.
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only).
+Copyright (C) 2025 [Your Name or Organization]
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ### Commercial Licensing
 
-For proprietary or commercial use, alternative licensing options are available. Please contact the maintainers for more information.
+For proprietary or commercial use, alternative licensing options are available. This allows you to use this software under different terms than the AGPL-3.0-only license. Please contact the maintainers at [your-email@example.com] for more information about commercial licensing options.
+
+### Contributing
+
+Contributions are welcome! Please note that all contributions will be licensed under the same AGPL-3.0-only license that covers the project. By contributing, you agree to license your contributions under these terms.
