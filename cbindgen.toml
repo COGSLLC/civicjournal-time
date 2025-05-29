@@ -1,0 +1,37 @@
+language = "C"
+
+# Style options
+tab_width = 2
+line_length = 80
+line_comment = "//"
+
+# What to include
+include_version = true
+include_guard = "CIVICJOURNAL_TIME_H"
+include_guard_name = "CIVICJOURNAL_TIME_H"
+
+# Includes header
+header = """
+/*
+ * C API for civicjournal-time
+ *
+ * This is an auto-generated header file. Do not edit directly.
+ * Generated from the Rust code in the civicjournal-time crate.
+ *
+ * This file is part of the civicjournal-time project.
+ * Copyright (C) 2025 Cooperative Open Government Systems, LLC
+ */
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+"""
+
+trailer = """
+#ifdef __cplusplus
+}
+#endif
+"""

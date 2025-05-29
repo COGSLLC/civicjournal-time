@@ -14,6 +14,8 @@ pub mod journal_api;
 pub mod health_monitor;
 pub mod fork_detection;
 pub mod time_hierarchy;
+pub mod ffi;
+
 #[cfg(test)]
 pub mod integration_tests;
 

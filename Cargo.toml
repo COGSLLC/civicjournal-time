@@ -19,6 +19,9 @@ lto = true  # Link-time optimization for release builds
 [target.'cfg(windows)']
 rustflags = ["-Ctarget-feature=+crt-static"]
 
+[lib]
+crate-type = ["cdylib", "rlib"]  # cdylib for C ABI, rlib for Rust
+
 [dependencies]
 # Core dependencies
 anyhow = "1.0"
@@ -26,6 +29,17 @@ thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+libc = "0.2"  # For C types
+sha2 = { version = "0.10", default-features = false }  # Pure Rust implementation
+clap = { version = "4.0", features = ["derive"] }
+lru = "0.10.0"  # For LRU cache implementation
+async-trait = "0.1"  # For async trait support
+bincode = "1.3"  # For binary serialization
+hex = "0.4"
+ctrlc = { version = "3.4", features = ["termination"] }
+enable-ansi-support = "0.2"
+
+[build-dependencies]
 sha2 = { version = "0.10", default-features = false }  # Pure Rust implementation
 clap = { version = "4.0", features = ["derive"] }
 lru = "0.10.0"  # For LRU cache implementation
