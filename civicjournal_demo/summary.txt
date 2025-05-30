@@ -1,7 +1,0 @@
-CivicJournal Demo Summary
-=========================
-Total hours: 72
-Total deltas: 73
-Output directory: ./civicjournal_demo
-Deltas saved to: ./civicjournal_demo/deltas
-Hierarchy snapshots saved to: ./civicjournal_demo/snapshots

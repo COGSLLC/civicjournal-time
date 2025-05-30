@@ -1,106 +1,23 @@
 [package]
-edition = "2021"
 name = "civicjournal-time"
 version = "0.1.0"
+edition = "2021"
 description = "A hierarchical time-series journal system using merkle-chains and pages for efficient historical state management"
 license = "AGPL-3.0-only"
 
-# Disable incremental compilation to avoid file locking issues
-[profile.dev]
-incremental = false
-codegen-units = 1  # Single codegen unit for more deterministic builds
-
-[profile.release]
-incremental = false
-codegen-units = 1  # Single codegen unit for more deterministic builds
-lto = true  # Link-time optimization for release builds
-
-# Windows-specific optimizations
-[target.'cfg(windows)']
-rustflags = ["-Ctarget-feature=+crt-static"]
-
-[lib]
-crate-type = ["cdylib", "rlib"]  # cdylib for C ABI, rlib for Rust
-
 [dependencies]
-# Core dependencies
-anyhow = "1.0"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-libc = "0.2"  # For C types
-sha2 = { version = "0.10", default-features = false }  # Pure Rust implementation
-clap = { version = "4.0", features = ["derive"] }
-lru = "0.10.0"  # For LRU cache implementation
-async-trait = "0.1"  # For async trait support
-bincode = "1.3"  # For binary serialization
-hex = "0.4"
-ctrlc = { version = "3.4", features = ["termination"] }
-enable-ansi-support = "0.2"
-
-[build-dependencies]
-sha2 = { version = "0.10", default-features = false }  # Pure Rust implementation
-clap = { version = "4.0", features = ["derive"] }
-lru = "0.10.0"  # For LRU cache implementation
-async-trait = "0.1"  # For async trait support
-bincode = "1.3"  # For binary serialization
-hex = "0.4"  # For hex encoding/decoding
-
-# Async support
-tokio = { version = "1.0", features = ["full", "rt", "rt-multi-thread", "sync", "time"] }  # Async runtime with all features
-futures = { version = "0.3", features = ["executor"], optional = true }  # For async/await support and block_on
-warp = { version = "0.3", optional = true, features = ["tls"] }
-enable-ansi-support = { version = "0.2", optional = true }
-ctrlc = { version = "3.4", features = ["termination"], optional = true }
-log = "0.4"  # For logging
-
-# Windows-specific dependencies
-[target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["handleapi", "fileapi", "winnt", "processthreadsapi", "consoleapi", "wincon", "wincontypes", "minwinbase"] }
-
-# Feature flags
-[features]
-default = ["console", "graceful-shutdown"]
-web = ["warp", "tokio"]  # Enable web server and tokio runtime
-console = ["enable-ansi-support"]
-graceful-shutdown = ["ctrlc"]
-full = ["web", "console", "graceful-shutdown"] # Complete functionality with all features
-
-# Enable all async features
-async = ["futures", "tokio"]
-
-# Enable tokio runtime
-tokio = ["tokio/rt-multi-thread", "tokio/rt"]
+sha2 = "0.10"
+hex = "0.4" # For converting hashes to hex strings
 
 [dev-dependencies]
-tempfile = "3.10"  # For creating temporary directories in tests
-assert_cmd = "2.0"  # For testing command-line applications
-predicates = "3.1.0"  # For test assertions
-insta = { version = "1.38.0", features = ["yaml"] }  # For snapshot testing
-criterion = { version = "0.4", features = ["html_reports"] }
+# Add development dependencies here, e.g., for testing
 
-[lints.rust]
-# Enable some additional lints
-unused_imports = "warn"
-unused_variables = "warn"
-unused_must_use = "warn"
-
-[package.metadata.docs.rs]
-# Enable all features for documentation
-default-target = "x86_64-pc-windows-msvc"
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-
-[workspace]
-# Workspace members
-members = [
-    "."
-]
-
-# Exclude the minimal test directory
-exclude = [
-    "minimal"
-]
-
-resolver = "2"  # Use the version 2 feature resolver
+[features]
+default = []
+async_api = ["tokio", "futures"]
+tokio = { version = "1.0", features = ["full"], optional = true }
+futures = { version = "0.3", optional = true }
