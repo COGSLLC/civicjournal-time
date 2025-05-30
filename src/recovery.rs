@@ -25,6 +25,9 @@ pub enum RecoveryError {
     
     #[error("Fork detected at entry {0}")]
     ForkDetected(u64),
+    
+    #[error("Other error: {0}")]
+    Other(String),
 }
 
 #[derive(Debug, Error)]

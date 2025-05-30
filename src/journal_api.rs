@@ -2,10 +2,7 @@ use std::sync::Arc;
 use std::any::Any;
 use thiserror::Error;
 
-// Conditionally use appropriate Mutex based on feature
-#[cfg(feature = "web")]
-use tokio::sync::Mutex;
-#[cfg(not(feature = "web"))]
+// Using std::sync::Mutex for all implementations
 use std::sync::Mutex;
 
 use crate::rate_limiter::{RateLimiter, RateLimitSettings, RateLimitError};
@@ -71,6 +68,8 @@ impl JournalApi {
     }
     
     /// Append an entry to the journal with rate limiting and validation (async version)
+    // Temporarily commented out to remove tokio dependency issues
+    /*
     #[cfg(feature = "web")]
     pub async fn append_entry(
         &self,
@@ -110,6 +109,7 @@ impl JournalApi {
         
         Ok(())
     }
+    */
     
     /// Append an entry to the journal with rate limiting and validation (sync version)
     #[cfg(not(feature = "web"))]
@@ -159,6 +159,8 @@ impl JournalApi {
     }
     
     /// Recover the journal from corruption (async version)
+    // Temporarily commented out to remove tokio dependency issues
+    /*
     #[cfg(feature = "web")]
     pub async fn recover(&self) -> Result<String, JournalApiError> {
         let inner = self.inner.clone();
@@ -187,6 +189,7 @@ impl JournalApi {
         
         Ok(message)
     }
+    */
     
     /// Recover the journal from corruption (sync version)
     #[cfg(not(feature = "web"))]
@@ -201,6 +204,8 @@ impl JournalApi {
     }
     
     /// Detect forks in the journal (async version)
+    // Temporarily commented out to remove tokio dependency issues
+    /*
     #[cfg(feature = "web")]
     pub async fn detect_forks(&self) -> Result<Vec<String>, JournalApiError> {
         let inner = self.inner.clone();
@@ -223,6 +228,7 @@ impl JournalApi {
         
         Ok(messages)
     }
+    */
     
     /// Detect forks in the journal (sync version)
     #[cfg(not(feature = "web"))]

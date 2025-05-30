@@ -48,10 +48,8 @@ bincode = "1.3"  # For binary serialization
 hex = "0.4"  # For hex encoding/decoding
 
 # Async support
+tokio = { version = "1.0", features = ["full", "rt", "rt-multi-thread", "sync", "time"] }  # Async runtime with all features
 futures = { version = "0.3", features = ["executor"], optional = true }  # For async/await support and block_on
-
-# Dependencies with optional features
-tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "sync", "time"] }  # Runtime for async operations
 warp = { version = "0.3", optional = true, features = ["tls"] }
 enable-ansi-support = { version = "0.2", optional = true }
 ctrlc = { version = "3.4", features = ["termination"], optional = true }
@@ -64,13 +62,16 @@ winapi = { version = "0.3", features = ["handleapi", "fileapi", "winnt", "proces
 # Feature flags
 [features]
 default = ["console", "graceful-shutdown"]
-web = ["warp"]  # Enable web server
+web = ["warp", "tokio"]  # Enable web server and tokio runtime
 console = ["enable-ansi-support"]
 graceful-shutdown = ["ctrlc"]
 full = ["web", "console", "graceful-shutdown"] # Complete functionality with all features
 
 # Enable all async features
-async = ["futures"]
+async = ["futures", "tokio"]
+
+# Enable tokio runtime
+tokio = ["tokio/rt-multi-thread", "tokio/rt"]
 
 [dev-dependencies]
 tempfile = "3.10"  # For creating temporary directories in tests
