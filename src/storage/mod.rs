@@ -7,9 +7,15 @@ pub mod file;
 
 // Define a common storage trait
 
-use crate::core::page::JournalPage;
+use crate::config::StorageConfig;
+use crate::StorageType;
+use crate::core::page::{JournalPage, JournalPageSummary};
 use crate::error::CJError;
+use crate::CJResult;
 use async_trait::async_trait;
+
+pub use memory::MemoryStorage;
+pub use file::FileStorage;
 
 /// Defines the interface for storage backends capable of persisting and retrieving journal pages.
 ///
@@ -52,11 +58,48 @@ pub trait StorageBackend: Send + Sync + std::fmt::Debug + 'static {
     /// Returns a `CJError` if there's an issue accessing the storage.
     async fn page_exists(&self, level: u8, page_id: u64) -> Result<bool, CJError>;
 
-    // TODO: Consider adding other methods as needed, e.g.:
-    // async fn delete_page(&self, level: u8, page_id: u64) -> Result<(), CJError>;
-    // async fn list_pages_at_level(&self, level: u8) -> Result<Vec<u64>, CJError>; // Returns list of PageIDs
+    /// Deletes a specific page from the storage backend.
+    ///
+    /// # Arguments
+    /// * `level` - The hierarchy level of the page to delete.
+    /// * `page_id` - The ID of the page to delete.
+    async fn delete_page(&self, level: u8, page_id: u64) -> Result<(), CJError>;
+
+    /// Lists summaries of all finalized pages at a specific level.
+    ///
+    /// This is used by the retention policy to identify pages eligible for deletion.
+    /// It should only return pages that are considered finalized and safe to potentially delete.
+    ///
+    /// # Arguments
+    /// * `level` - The hierarchy level for which to list page summaries.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of `JournalPageSummary` or a `CJError`.
+        async fn list_finalized_pages_summary(&self, level: u8) -> Result<Vec<JournalPageSummary>, CJError>;
 }
 
-// Re-export implementations or the trait
-// pub use memory::InMemoryStorage;
-// pub use file::FileStorage;
+/// Creates a storage backend based on the provided configuration.
+///
+/// # Arguments
+/// * `config` - A reference to the `StorageConfig` specifying the type and settings for the backend.
+///
+/// # Returns
+/// A `CJResult` containing a `Box<dyn StorageBackend>` on success, or a `CJError` on failure.
+pub async fn create_storage_backend(config: &StorageConfig) -> CJResult<Box<dyn StorageBackend>> {
+    match config.storage_type {
+        StorageType::Memory => {
+            Ok(MemoryStorage::new().boxed())
+        }
+        StorageType::File => {
+            if config.base_path.is_empty() {
+                return Err(CJError::invalid_input(
+                    "FileStorage requires a non-empty base_path.".to_string()
+                ));
+            }
+            let file_storage = FileStorage::new(&config.base_path).await?;
+            Ok(file_storage.boxed())
+        }
+        // If StorageType were non_exhaustive or had more variants, a catch-all might be needed:
+        // _ => Err(CJError::ConfigurationError(format!("Unsupported storage type: {:?}", config.storage_type))),
+    }
+}

@@ -27,6 +27,23 @@ pub enum PageContentHash {
     ThrallPageHash([u8; 32]),
 }
 
+/// A summary of a JournalPage, used for lightweight listings, e.g., for retention policies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JournalPageSummary {
+    /// TODO: Document this field
+    pub page_id: u64,
+    /// TODO: Document this field
+    pub level: u8,
+    /// TODO: Document this field
+    pub creation_timestamp: DateTime<Utc>, // Changed from start_time to match JournalPage
+    /// TODO: Document this field
+    pub end_time: DateTime<Utc>,
+    /// TODO: Document this field
+    pub page_hash: [u8; 32],
+    // Consider adding num_items if useful for retention logic without loading full page
+    // pub num_items: usize, 
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 /// Represents a page in the CivicJournal, a collection of content hashes covering a specific time window.
 ///
@@ -171,7 +188,7 @@ mod tests {
 
     // Removed local PAGE_TEST_MUTEX, lazy_static, and unused Mutex/Ordering imports
 
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel}; // Renamed to avoid conflict
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, RollupConfig}; // Renamed to avoid conflict
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
 
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
@@ -181,8 +198,12 @@ mod tests {
         Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
-                    TypeTimeLevel { name: "second".to_string(), duration_seconds: 1 },
-                    TypeTimeLevel { name: "minute".to_string(), duration_seconds: 60 },
+                    TypeTimeLevel {
+                            rollup_config: RollupConfig::default(),
+                            retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
+                    TypeTimeLevel {
+                            rollup_config: RollupConfig::default(),
+                            retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
             rollup: Default::default(),

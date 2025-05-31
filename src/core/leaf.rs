@@ -82,12 +82,15 @@ impl JournalLeaf {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import for test synchronization
     use super::*; // Imports JournalLeaf and its methods
     use chrono::Utc;
     use serde_json::json;
 
-    #[test]
-    fn test_create_journal_leaf() {
+    #[tokio::test]
+    async fn test_create_journal_leaf() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await; // Lock for test synchronization
+        reset_global_ids(); // Reset global ID counters
         let timestamp = Utc::now();
         let prev_hash = None;
         let container_id = "test_container".to_string();

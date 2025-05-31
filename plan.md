@@ -366,6 +366,7 @@ This phase implements the logic for managing time levels and aggregating pages.
     *   It reaches `max_page_age_seconds` (from `RollupConfig`).
     *   On `force_rollup_on_shutdown` (if applicable).
     *   Sealing involves finalizing its Merkle root, calculating its `PageHash`, and persisting it.
+*   **Status (As of 2025-05-31):** Core logic implemented. Recent work involved extensive unit testing and fixes (e.g., `test_add_leaf_to_new_page_and_check_active`, `test_single_rollup_max_items`) to ensure correct behavior, especially with `max_leaves_per_page = 1` leading to immediate finalization and rollup. Sealing due to `max_page_age_seconds` and `force_rollup_on_shutdown` also covered by existing logic and tests.
 
 ### Task 3.3: Implement Roll-up Logic
 
@@ -375,12 +376,26 @@ This phase implements the logic for managing time levels and aggregating pages.
 *   When a page at level `L` is sealed, its `PageHash` becomes a `PageContentHash::ThrallPageHash` entry in the active page of level `L+1`.
 *   This may trigger a cascade of sealing and roll-ups up the hierarchy.
 *   The `Thralls[]` field in `JournalPage` (if explicitly storing child PageIDs) would be populated here.
+*   **Status (As of 2025-05-31):** Core logic implemented via `perform_rollup` method. Recent work involved extensive unit testing and fixes to validate single and cascading rollups, ensuring correct `prev_page_hash` linking and finalization propagation, particularly stressed by `max_leaves_per_page = 1` configuration. Key tests like `test_add_leaf_to_new_page_and_check_active` and `test_single_rollup_max_items` now pass, confirming this behavior.
 
 ## 4. Phase 4: Basic API
 
 This phase exposes core functionality.
 
 ### Task 4.1: Implement `Append Leaf` API
+
+*   **Objective**: Provide a public API function to append new leaves to the journal.
+*   **Status (As of 2025-05-31):**
+    *   Initial implementation complete in `src/api/async_api.rs` under the `async_api` feature flag.
+    *   `Journal` struct created, encapsulating `TimeHierarchyManager`.
+    *   `Journal::new(config: &'static Config)` method implemented to initialize the journal with configured storage.
+    *   `Journal::append_leaf(...)` async method implemented to add new leaves.
+    *   Basic unit test `test_journal_new_and_append` passes, verifying instantiation and single leaf append.
+    *   `Journal` struct is re-exported from `src/api/mod.rs`.
+*   **Next Steps:**
+    1.  **Comprehensive Testing:** Add more tests for multiple appends, appends triggering rollups, and error conditions.
+    2.  **API Documentation:** Add detailed `rustdoc` comments for the `Journal` struct and its methods.
+    3.  **Review & Document Usage Pattern:** Confirm and document the library usage pattern (e.g., `init()` then `Journal::new(config())`).
 
 **Location**: `src/api/sync_api.rs` and/or `src/api/async_api.rs`.
 

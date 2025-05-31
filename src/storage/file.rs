@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use tokio::fs;
 
-use crate::core::page::JournalPage;
+use crate::core::page::{JournalPage, JournalPageSummary};
 use crate::error::CJError;
 use crate::storage::StorageBackend;
 
@@ -42,6 +42,14 @@ impl FileStorage {
         }
 
         Ok(Self { base_path: path })
+    }
+
+    /// Constructs the path for a specific journal page file.
+    /// Path: `base_path/journal/level_<L>/page_<ID>.json`
+    /// Helper to create a boxed version of `FileStorage`.
+    /// This is useful when a `Box<dyn StorageBackend>` is needed.
+    pub fn boxed(self) -> Box<dyn StorageBackend> {
+        Box::new(self)
     }
 
     /// Constructs the path for a specific journal page file.
@@ -90,6 +98,60 @@ impl StorageBackend for FileStorage {
         let page_path = self.get_page_path(level, page_id);
         fs::try_exists(&page_path).await.map_err(|e| CJError::StorageError(format!("Failed to check page existence '{}': {}", page_path.display(), e)))
     }
+
+    async fn delete_page(&self, level: u8, page_id: u64) -> Result<(), CJError> {
+        let path = self.get_page_path(level, page_id);
+        if fs::try_exists(&path).await.map_err(|e| CJError::StorageError(format!("Failed to check page existence for deletion '{}': {}", path.display(), e)))? {
+            tokio::fs::remove_file(path).await.map_err(|e| {
+                CJError::StorageError(format!("Failed to delete page file L{}/{}: {}", level, page_id, e))
+            })?
+        }
+        Ok(())
+    }
+
+    async fn list_finalized_pages_summary(&self, level: u8) -> Result<Vec<JournalPageSummary>, CJError> {
+        let level_path = self.base_path.join(JOURNAL_SUBDIR).join(format!("level_{}", level));
+        if !fs::try_exists(&level_path).await.map_err(|e| CJError::StorageError(format!("Failed to check level directory existence '{}': {}", level_path.display(), e)))? {
+            return Ok(Vec::new()); // No directory for this level, so no pages
+        }
+
+        let mut summaries = Vec::new();
+        let mut read_dir = tokio::fs::read_dir(level_path).await.map_err(|e| {
+            CJError::StorageError(format!("Failed to read level directory L{}: {}", level, e))
+        })?;
+
+        while let Some(entry) = read_dir.next_entry().await.map_err(|e| {
+            CJError::StorageError(format!("Failed to read directory entry in L{}: {}", level, e))
+        })? {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if stem.starts_with("page_") {
+                        if let Ok(page_id) = stem.trim_start_matches("page_").parse::<u64>() {
+                            match self.load_page(level, page_id).await {
+                                Ok(Some(page)) => {
+                                    summaries.push(JournalPageSummary {
+                                        page_id: page.page_id,
+                                        level: page.level,
+                                        creation_timestamp: page.creation_timestamp,
+                                        end_time: page.end_time,
+                                        page_hash: page.page_hash,
+                                    });
+                                }
+                                Ok(None) => {
+                                    eprintln!("Warning: Found page file {} but failed to load it as JournalPage for summary.", path.display());
+                                }
+                                Err(e) => {
+                                    eprintln!("Warning: Error loading page {} for summary: {}", path.display(), e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(summaries)
+    }
 }
 
 #[cfg(test)]
@@ -102,15 +164,19 @@ mod tests {
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
     
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
+    use crate::types::time::{RollupConfig, TimeLevel as TypeTimeLevel};
     use crate::{StorageType, TimeHierarchyConfig};
-    use crate::types::time::TimeLevel as TypeTimeLevel;
 
     fn get_test_config() -> Config {
         Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
-                    TypeTimeLevel { name: "second".to_string(), duration_seconds: 1 },
-                    TypeTimeLevel { name: "minute".to_string(), duration_seconds: 60 },
+                    TypeTimeLevel {
+                            rollup_config: RollupConfig::default(),
+                            retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
+                    TypeTimeLevel {
+                            rollup_config: RollupConfig::default(),
+                            retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
             rollup: Default::default(),

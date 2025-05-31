@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
-use crate::core::page::JournalPage;
+use crate::core::page::{JournalPage, JournalPageSummary};
 use crate::error::CJError;
 use crate::storage::StorageBackend;
 
@@ -64,6 +64,29 @@ impl StorageBackend for MemoryStorage {
     async fn page_exists(&self, level: u8, page_id: u64) -> Result<bool, CJError> {
         Ok(self.pages.contains_key(&(level, page_id)))
     }
+
+    async fn delete_page(&self, level: u8, page_id: u64) -> Result<(), CJError> {
+        self.pages.remove(&(level, page_id));
+        Ok(())
+    }
+
+    async fn list_finalized_pages_summary(&self, level: u8) -> Result<Vec<JournalPageSummary>, CJError> {
+        let summaries = self.pages
+            .iter()
+            .filter(|entry| entry.key().0 == level)
+            .map(|entry| {
+                let page = entry.value();
+                JournalPageSummary {
+                    page_id: page.page_id,
+                    level: page.level,
+                    creation_timestamp: page.creation_timestamp,
+                    end_time: page.end_time,
+                    page_hash: page.page_hash,
+                }
+            })
+            .collect();
+        Ok(summaries)
+    }
 }
 
 #[cfg(test)]
@@ -74,15 +97,19 @@ mod tests {
     // Removed Ordering as reset_global_ids handles it
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
-    use crate::{StorageType, TimeHierarchyConfig};
-    use crate::types::time::TimeLevel as TypeTimeLevel;
+    use crate::{StorageType};
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, RollupConfig};
 
     fn get_test_config() -> Config {
         Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
-                    TypeTimeLevel { name: "second".to_string(), duration_seconds: 1 },
-                    TypeTimeLevel { name: "minute".to_string(), duration_seconds: 60 },
+                    TypeTimeLevel {
+                            rollup_config: RollupConfig::default(),
+                            retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
+                    TypeTimeLevel {
+                            rollup_config: RollupConfig::default(),
+                            retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
             rollup: Default::default(),

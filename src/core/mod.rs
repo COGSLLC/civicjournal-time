@@ -19,8 +19,12 @@ pub mod time_manager;
 
 // Shared items for testing, accessible within the crate.
 // Placed here to ensure they are compiled and accessible for all test modules within `core`.
+
+#[cfg(test)]
 use tokio::sync::Mutex;
+#[cfg(test)]
 use lazy_static::lazy_static;
+#[cfg(test)]
 use std::sync::atomic::Ordering;
 
 #[cfg(test)]

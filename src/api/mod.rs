@@ -16,3 +16,5 @@ pub trait CivicJournalApi {
 
 // Re-export API implementations or traits
 // pub use sync_api::SyncApi;
+#[cfg(feature = "async_api")]
+pub use self::async_api::Journal;

@@ -29,18 +29,17 @@ use crate::{
     StorageType,
     RollupConfig,
     TimeHierarchyConfig,
+    TimeLevel,
 };
 
 /// Re-export the error type
 pub use error::ConfigError;
-
 
 /// The environment variable prefix for configuration overrides
 const ENV_PREFIX: &str = "CJ_";
 
 /// The application name used for finding config directories
 const APP_NAME: &str = "civicjournal-time";
-
 
 /// Main configuration structure for the CivicJournal Time system.
 ///
@@ -201,7 +200,14 @@ impl Default for Config {
     /// file cannot be parsed.
     fn default() -> Self {
         Config {
-            time_hierarchy: TimeHierarchyConfig::default(),
+            time_hierarchy: TimeHierarchyConfig {
+                levels: vec![
+                    TimeLevel::new("raw", 1, RollupConfig::default(), None), // Smallest duration, pages primarily finalize by count/age
+                    TimeLevel { name: "minute".to_string(), duration_seconds: 60, rollup_config: RollupConfig::default(), retention_policy: None },
+                    TimeLevel { name: "hour".to_string(), duration_seconds: 3600, rollup_config: RollupConfig::default(), retention_policy: None },
+                    TimeLevel { name: "day".to_string(), duration_seconds: 86400, rollup_config: RollupConfig::default(), retention_policy: None },
+                ]
+            },
             rollup: RollupConfig::default(),
             storage: StorageConfig::default(),
             compression: CompressionConfig::default(),
@@ -328,7 +334,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.time_hierarchy.levels.len(), 7);
+        assert_eq!(config.time_hierarchy.levels.len(), 4);
         assert!(config.rollup.max_leaves_per_page > 0);
         assert!(!config.storage.base_path.is_empty());
     }
