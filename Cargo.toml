@@ -5,19 +5,88 @@ edition = "2021"
 description = "A hierarchical time-series journal system using merkle-chains and pages for efficient historical state management"
 license = "AGPL-3.0-only"
 
+# Documentation settings
+[package.metadata.docs.rs]
+# Enable all features for documentation
+all-features = true
+
+
 [dependencies]
+async-trait = "0.1"
+# Core dependencies
 thiserror = "1.0"
-serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+anyhow = "1.0"
+url = "2.5.0"  # For URL parsing in metrics endpoint validation
+
+# Serialization
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
+toml = { version = "0.7", features = ["preserve_order"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde", "clock", "std"] }
+chrono-tz = { version = "0.8", optional = true }
+
+# Hashing and crypto
 sha2 = "0.10"
-hex = "0.4" # For converting hashes to hex strings
+hex = "0.4"
+ring = { version = "0.17", optional = true }  # For cryptographic operations
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"], optional = true }
+futures = { version = "0.3", optional = true }
+
+# Configuration and environment
+config = { version = "0.13", default-features = false, features = ["toml"] }
+env_logger = { version = "0.10", optional = true }
+strum = { version = "0.25", features = ["derive"] }
+strum_macros = "0.25"
+directories = "6.0.0"  # For finding config files in standard locations
+
+# Compression
+zstd = { version = "0.12", optional = true }
+lz4 = { version = "1.24", optional = true }
+snap = { version = "1.1", optional = true }  # For Snappy compression
+
+# Concurrency
+parking_lot = { version = "0.12", optional = true }  # More efficient synchronization primitives
+lazy_static = "1.4"  # For static lazy initialization
+dashmap = { version = "5.5.3", optional = true } # For MemoryStorage
 
 [dev-dependencies]
-# Add development dependencies here, e.g., for testing
+lazy_static = "1.4.0"
+# Testing
+criterion = { version = "0.5", features = ["html_reports"] }
+serial_test = "2.0"
+tempfile = "3.3"
+assert_matches = "1.5.0"
 
 [features]
-default = []
-async_api = ["tokio", "futures"]
-tokio = { version = "1.0", features = ["full"], optional = true }
-futures = { version = "0.3", optional = true }
+async_api = []
+default = ["file-storage", "memory-storage", "zstd-compression", "logging", "async"]
+
+# Storage backends
+file-storage = ["tokio/fs"]
+memory-storage = ["dep:dashmap"]
+
+# Compression
+zstd-compression = ["dep:zstd"]
+lz4-compression = ["dep:lz4"]
+snappy-compression = ["dep:snap"]
+no-compression = []
+
+# Timezones
+timezones = ["chrono-tz"]
+
+# Async runtime
+async = ["tokio", "futures"]
+
+# Logging
+logging = ["env_logger"]
+
+# Crypto (for checksums and signatures)
+crypto = ["ring"]
+
+# Concurrency
+concurrent = ["parking_lot"]

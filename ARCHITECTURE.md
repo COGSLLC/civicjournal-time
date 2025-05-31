@@ -1,202 +1,321 @@
 # CivicJournal Time - Architecture Document
 
-## Current Architecture (As of May 2024)
+## Core Architecture
+
+### Overview
+
+CivicJournal Time is a hierarchical Merkle-chained delta-log system designed for tamper-evident time-series data. It organizes data into a time-based hierarchy where each level represents a different time granularity, from minutes up to centuries.
 
 ### Core Components
 
 1. **Time Hierarchy System**
-   - Manages time-based organization of data chunks
-   - Handles chunk creation, sealing, and retention
-   - Implements a hierarchical time-based storage model
+   - Manages time-based organization of journal entries
+   - Handles page creation, sealing, and roll-up
+   - Implements a hierarchical time-based storage model with 7 levels
 
-2. **Chunk Management**
-   - Handles storage and retrieval of data chunks
-   - Manages chunk persistence and caching
-   - Implements chunk eviction policies
+2. **Journal Management**
+   - Handles storage and retrieval of journal entries
+   - Manages page persistence and roll-up policies
+   - Implements Merkle tree for data integrity
 
 3. **Configuration System**
    - Comprehensive configuration via TOML files
-   - Supports multiple chunking strategies:
-     - Time-based
-     - Event count-based
-     - Signal-based
-     - Size-based
-   - Flexible compression and persistence options
+   - Supports flexible roll-up strategies:
+     - Time-based roll-up triggers
+     - Size-based roll-up thresholds
+     - Custom roll-up policies
+   - Configurable storage backends and retention policies
 
 4. **Data Model**
-   - Delta-based change tracking
+   - Delta-based change tracking with cryptographic chaining
    - Merkle tree for data integrity
-   - Snapshot support for efficient state reconstruction
+   - Hierarchical page structure for efficient queries
 
-### Current Module Structure
+### Module Structure
 
 ```
 src/
-├── config.rs         # Configuration parsing and validation
-├── error.rs          # Error types and conversions
-├── ffi.rs            # Foreign Function Interface bindings
-├── fork_detection.rs # Fork detection logic
-├── health_monitor.rs # System health monitoring
-├── journal_api.rs    # Main public API
-├── lib.rs            # Library entry point
-├── merkle_tree.rs    # Merkle tree implementation
-├── recovery.rs       # Data recovery utilities
-├── schema.rs         # Core data structures
-├── snapshot.rs       # Snapshot management
-└── time_hierarchy.rs # Time-based data organization
+├── config/           # Configuration management
+│   ├── mod.rs        # Configuration loading and validation
+│   └── config.toml   # Default configuration
+├── types/            # Core type definitions
+│   ├── mod.rs        # Type exports
+│   ├── time.rs       # Time-related types
+│   └── journal.rs    # Journal entry types
+├── core/             # Core functionality
+│   ├── hash.rs       # Hashing functionality
+│   ├── leaf.rs       # Leaf functionality
+│   ├── page.rs       # Page functionality
+│   └── merkle.rs     # Merkle tree types
+├── storage/          # Storage backends
+│   ├── mod.rs        # Storage trait and implementations
+│   ├── memory.rs     # In-memory storage
+│   └── file.rs       # File system storage
+├── time/             # Time hierarchy implementation
+│   ├── mod.rs        # Time hierarchy management
+│   ├── level.rs      # Time level definitions
+│   └── rollup.rs     # Roll-up logic
+├── api/              # Public API
+│   ├── mod.rs        # Public interface
+│   └── query.rs      # Query interface
+└── ffi/              # Foreign Function Interface
+    ├── mod.rs        # FFI exports
+    ├── c/            # C bindings
+    └── wasm/         # WebAssembly bindings
 ```
 
 ### Key Data Structures
 
-1. **TimeHierarchy**
-   - Manages the hierarchical organization of time-based chunks
-   - Handles chunk creation, sealing, and retrieval
+1. **JournalLeaf**
+   - Represents a single delta/change
+   - Contains cryptographic links to previous entries
+   - Includes metadata and payload
+
+2. **JournalPage**
+   - Groups multiple leaves within a time window
+   - Maintains Merkle tree for integrity
+   - Handles roll-up to higher hierarchy levels
+
+3. **TimeHierarchy**
+   - Manages the 7-level time hierarchy
+   - Handles page creation and roll-up
    - Implements retention policies
 
-2. **TimeChunk**
-   - Represents a chunk of time with associated deltas
-   - Manages delta storage and retrieval
-   - Handles serialization/deserialization
-
-3. **Delta**
-   - Represents a single change to the system state
-   - Contains metadata about the change
-   - Supports cryptographic verification
-
 4. **MerkleTree**
-   - Provides cryptographic integrity verification
-   - Supports efficient delta validation
+   - Provides cryptographic verification
+   - Supports efficient inclusion proofs
    - Enables secure state reconstruction
 
-## Architectural Issues and Limitations
+## Configuration System
 
-1. **Complexity in Time Hierarchy**
-   - Overly complex time management logic
-   - Tight coupling between time management and storage
-   - Difficult to extend with new time-based behaviors
-
-2. **Configuration Complexity**
-   - Overly flexible configuration options
-   - Complex validation logic
-   - Difficult to reason about configuration interactions
-
-3. **Error Handling**
-   - Inconsistent error types and handling
-   - Missing error contexts in many places
-   - Complex error conversion logic
-
-4. **Performance**
-   - Potential bottlenecks in chunk management
-   - Inefficient memory usage patterns
-   - Suboptimal serialization/deserialization
-
-## Proposed Architecture
-
-### Core Principles
-
-1. **Simplicity First**
-   - Reduce unnecessary abstractions
-   - Favor composition over inheritance
-   - Make common cases easy, complex cases possible
-
-2. **Type Safety**
-   - Leverage Rust's type system
-   - Minimize use of `unwrap()` and `expect()`
-   - Use newtypes for domain concepts
-
-3. **Modularity**
-   - Clear module boundaries
-   - Well-defined interfaces
-   - Minimal cross-module dependencies
-
-4. **Testability**
-   - Design for testability
-   - Support dependency injection
-   - Include comprehensive test coverage
-
-### Proposed Module Structure
+The configuration system provides a flexible and type-safe way to configure all aspects of the CivicJournal Time system. It's implemented in the `src/config/` directory with the following structure:
 
 ```
-src/
-├── types/                # Centralized type definitions (single source of truth)
-│   ├── mod.rs          # Main types module exports
-│   ├── delta.rs        # Delta type definitions
-│   ├── error.rs        # Error types and conversions
-│   ├── ffi.rs          # FFI type definitions
-│   ├── metrics.rs      # Metrics type definitions
-│   ├── storage.rs      # Storage-related type definitions
-│   └── time/           # Time-related types
-│       ├── mod.rs      # Time module exports
-│       ├── chunk.rs    # Time chunk definitions
-│       ├── duration.rs # Duration handling
-│       ├── level.rs    # Time level definitions
-│       └── unit.rs     # Time unit definitions
-│
-├── api/               # Public APIs
-│   ├── mod.rs         # Public API traits
-│   ├── sync.rs        # Synchronous API implementation
-│   └── async.rs       # Asynchronous API (feature-gated)
-│
-├── storage/           # Storage backends
-│   ├── mod.rs         # Storage trait and implementations
-│   ├── memory.rs      # In-memory storage backend
-│   └── disk.rs        # Persistent storage backend
-│
-└── ffi/              # Foreign function interface
-    ├── mod.rs        # Main FFI module
-    ├── async_ffi.rs  # Async FFI bindings
-    ├── c/           # C-specific FFI code
-    └── wasm/        # WebAssembly-specific FFI code
-    ├── mod.rs          # FFI utilities
-    ├── c/             # C bindings
-    └── wasm/          # WebAssembly bindings
+src/config/
+├── mod.rs         # Main configuration module and public API
+├── config.toml    # Default configuration values
+├── error.rs       # Error types and handling
+├── validation.rs  # Configuration validation logic
+└── types.rs       # Type definitions and enums
 ```
 
-### Key Architectural Changes
+### Configuration Structure
 
-1. **Simplified Time Management**
-   - Separate time windowing from storage
-   - Use a more straightforward chunking strategy
-   - Improve retention policy implementation
+The configuration is defined in TOML format with the following main sections:
 
-2. **Improved Configuration**
-   - Simplify configuration options
-   - Better validation with clearer error messages
-   - Support environment variable overrides
+```toml
+[time_hierarchy]
+# Time levels configuration
+levels = [
+    { name = "minute", duration_seconds = 60 },
+    { name = "hour", duration_seconds = 3600 },
+    { name = "day", duration_seconds = 86400 },
+    { name = "month", duration_seconds = 2592000 },
+    { name = "year", duration_seconds = 31536000 },
+    { name = "decade", duration_seconds = 315360000 },
+    { name = "century", duration_seconds = 3153600000 }
+]
 
-3. **Enhanced Error Handling**
-   - Unified error type with proper error contexts
-   - Better error conversion between modules
-   - More descriptive error messages
+[rollup]
+# When to trigger roll-up operations
+max_leaves_per_page = 1000
+max_page_age_seconds = 3600  # 1 hour
+force_rollup_on_shutdown = true
 
-4. **Performance Optimizations**
-   - Better memory management
-   - Improved serialization/deserialization
-   - More efficient chunk storage and retrieval
+[storage]
+type = "file"  # or "memory"
+base_path = "./data"
+max_open_files = 100
 
-## Migration Strategy
+[compression]
+enabled = true
+algorithm = "zstd"  # or "lz4", "snappy", "none"
+level = 3          # Compression level (1-22 for zstd)
 
-1. **Phase 1: Foundation**
-   - Set up new module structure
-   - Implement core data structures
-   - Create basic storage backend
+[logging]
+level = "info"     # "trace", "debug", "info", "warn", "error"
+console = true
+file = false
+file_path = "./civicjournal.log"
 
-2. **Phase 2: Core Functionality**
-   - Implement time windowing
-   - Add delta management
-   - Implement basic API surface
+[metrics]
+enabled = true
+push_interval_seconds = 60
+endpoint = ""
 
-3. **Phase 3: Advanced Features**
-   - Add Merkle tree support
-   - Implement snapshots
-   - Add health monitoring
+[retention]
+period_seconds = 0  # 0 = keep forever
+enabled = false
+cleanup_interval_seconds = 3600
+```
 
-4. **Phase 4: Integration**
-   - Implement FFI bindings
-   - Add documentation and examples
-   - Create migration guide
+### Core Components
+
+1. **Main Configuration (`mod.rs`)**
+   - Defines the `Config` struct with all configuration options
+   - Implements loading from files, environment variables, and programmatic overrides
+   - Provides validation of configuration values
+   - Includes sensible defaults for all settings
+
+2. **Error Handling (`error.rs`)**
+   - Defines `ConfigError` enum with variants for different error cases
+   - Implements `std::error::Error` for all error types
+   - Provides helpful error messages and context
+
+3. **Validation (`validation.rs`)**
+   - Validates configuration values and relationships
+   - Ensures time hierarchy levels are properly ordered
+   - Validates storage and compression settings
+   - Checks retention policies for consistency
+
+4. **Type Definitions (`types.rs`)**
+   - Defines enums for configuration options:
+     - `StorageType`: Memory or file-based storage
+     - `CompressionAlgorithm`: Supported compression algorithms
+     - `LogLevel`: Logging verbosity levels
+   - Implements parsing and display traits for all enums
+
+### Configuration Loading
+
+The configuration system supports multiple ways to load and override settings:
+
+1. **Default Configuration**
+   - Built-in defaults are compiled into the binary
+   - Ensures the application always has valid configuration
+   - Defined in `src/config/config.toml`
+
+2. **File-based Configuration**
+   - Loads from `config.toml` in the application directory
+   - Can specify custom path via `Config::load("path/to/config.toml")`
+   - Supports environment variable overrides (e.g., `CJ_STORAGE_TYPE=memory`)
+
+3. **Programmatic Overrides**
+   - All settings can be modified at runtime
+   - Supports dynamic reconfiguration
+   - Thread-safe for concurrent access
+
+### Validation Rules
+
+The configuration system enforces the following validation rules:
+
+1. **Time Hierarchy**
+   - Must have at least one time level
+   - Level names must be unique
+   - Durations must be in ascending order
+   - Durations must be greater than zero
+
+2. **Storage**
+   - Valid storage types: "memory" or "file"
+   - File storage requires a valid base path
+   - Maximum open files must be greater than zero
+
+3. **Compression**
+   - Valid algorithms: "zstd", "lz4", "snappy", "none"
+   - Zstd levels must be between 1-22
+   - LZ4 levels must be between 0-16
+
+4. **Retention**
+   - If enabled, retention period must be greater than zero
+   - Cleanup interval must be greater than zero
+
+### Usage Example
+
+```rust
+use civicjournal_time::{Config, CJResult};
+
+fn main() -> CJResult<()> {
+    // Load configuration from default location
+    let config = Config::load("config.toml")?;
+    
+    // Or create a custom configuration programmatically
+    let custom_config = Config {
+        storage: StorageConfig {
+            r#type: "memory".to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    
+    Ok(())
+}
+```
+
+### Error Handling
+
+All configuration operations return `Result<T, ConfigError>` with detailed error information:
+
+- File I/O errors
+- TOML parsing errors
+- Validation failures
+- Type conversion errors
+
+### Testing
+
+The configuration system includes comprehensive unit tests for:
+- Loading and parsing configuration files
+- Validating configuration values
+- Testing edge cases and error conditions
+- Verifying default values
 
 ## Performance Considerations
+
+### Memory Management
+
+1. **Page Caching**
+   - LRU cache for frequently accessed pages
+   - Configurable cache size limits
+
+2. **Batch Processing**
+   - Process leaves in batches
+   - Reduce I/O overhead
+
+3. **Lazy Loading**
+   - Load pages on demand
+   - Release unused resources
+
+### Storage Optimization
+
+1. **Compression**
+   - Configurable compression algorithms
+   - Balance between speed and size
+
+2. **Serialization**
+   - Efficient binary format
+   - Support for schema evolution
+
+3. **Indexing**
+   - Fast lookups by time range
+   - Efficient page location
+
+## Security Considerations
+
+1. **Data Integrity**
+   - Cryptographic hashing of all entries
+   - Merkle proofs for verification
+
+2. **Access Control**
+   - Configurable read/write permissions
+   - Support for authentication
+
+3. **Audit Trail**
+   - Immutable record of all changes
+   - Cryptographic signatures
+
+## Extensibility
+
+The architecture is designed to be extended in several ways:
+
+1. **Custom Storage Backends**
+   - Implement the `Storage` trait
+   - Support for databases, cloud storage, etc.
+
+2. **Custom Roll-up Logic**
+   - Implement custom roll-up strategies
+   - Support for domain-specific optimizations
+
+3. **Plugins**
+   - Extend functionality without modifying core
+   - Support for custom metrics, exporters, etc.
 
 1. **Memory Usage**
    - Implement efficient memory pooling
@@ -229,6 +348,47 @@ src/
    - Use modern, well-audited crypto primitives
    - Secure key management
    - Protection against side-channel attacks
+
+## Time Hierarchy and Rollup Mechanism
+
+The time hierarchy is implemented in `src/core/time_manager.rs` and manages:
+
+1. **Page Creation and Management**:
+   - Pages are created on-demand based on timestamp and level
+   - Each page has a time window defined by its level's duration
+   - Pages track their creation time, end time, and content hashes
+
+2. **Rollup Process**:
+   - Triggered when a page is finalized (either by size or age)
+   - Aggregates hashes from child pages into parent pages
+   - Recursively rolls up through the hierarchy as needed
+   - Stops at the highest configured time level
+
+3. **Active Page Management**:
+   - Each level maintains at most one active page
+   - Active pages accept new leaves until finalized
+   - Page finalization occurs when:
+     - Maximum leaves per page is reached, or
+     - Page age exceeds maximum configured age
+
+## Test Architecture
+
+The test suite follows these patterns:
+
+1. **Global State Management**:
+   - Uses `SHARED_TEST_ID_MUTEX` for test isolation
+   - `reset_global_ids()` ensures clean state between tests
+   - All tests that modify global state must acquire the mutex
+
+2. **Test Organization**:
+   - Unit tests are co-located with their modules
+   - Integration tests verify cross-component behavior
+   - Test helpers create consistent test data
+
+3. **Test Reliability**:
+   - Tests are deterministic and independent
+   - Time-based tests use controlled timestamps
+   - All tests clean up after themselves
 
 ## Future Extensions
 

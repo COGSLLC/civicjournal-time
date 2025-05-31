@@ -1,6 +1,5 @@
 // src/core/hash.rs
 
-use crate::error::CJError;
 use sha2::{Digest, Sha256};
 
 /// Computes the SHA256 hash of the given data.

@@ -1,10 +1,12 @@
 // src/time/mod.rs
 
-// Define sub-modules for time-related components
+/// Defines the `TimeHierarchy` structure for managing time-based page aggregation.
 pub mod hierarchy;
+/// Defines the `TimeLevel` enum, representing different granularities of time (Minute, Hour, Day, etc.).
 pub mod level;
+/// Defines time units and their relationships within the time hierarchy.
 pub mod unit;
 
 // Re-export key structures or functions
-// e.g., pub use hierarchy::TimeHierarchy;
-// e.g., pub use level::TimeLevel;
+// pub use hierarchy::TimeHierarchy;
+pub use level::TimeLevel;

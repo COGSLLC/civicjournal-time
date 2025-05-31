@@ -2,17 +2,20 @@
 
 ## Table of Contents
 1. [Testing Philosophy](#testing-philosophy)
-2. [Test Types](#test-types)
-3. [Test Organization](#test-organization)
-4. [Test Data Management](#test-data-management)
-5. [Test Fixtures](#test-fixtures)
-6. [Performance Testing](#performance-testing)
-7. [Property Testing](#property-testing)
-8. [Fuzz Testing](#fuzz-testing)
-9. [Test Coverage](#test-coverage)
-10. [CI/CD Integration](#cicd-integration)
-11. [Test Execution](#test-execution)
-12. [Test Naming Conventions](#test-naming-conventions)
+2. [Global Test Architecture](#global-test-architecture)
+3. [Test Types](#test-types)
+4. [Test Organization](#test-organization)
+5. [Test Data Management](#test-data-management)
+6. [Test Fixtures](#test-fixtures)
+7. [Time-based Testing](#time-based-testing)
+8. [Rollup Testing](#rollup-testing)
+9. [Performance Testing](#performance-testing)
+10. [Property Testing](#property-testing)
+11. [Fuzz Testing](#fuzz-testing)
+12. [Test Coverage](#test-coverage)
+13. [CI/CD Integration](#cicd-integration)
+14. [Test Execution](#test-execution)
+15. [Test Naming Conventions](#test-naming-conventions)
 
 ## Testing Philosophy
 
@@ -23,6 +26,61 @@ Our testing approach follows these core principles:
 - **Performance**: Tests should be fast to encourage frequent execution
 - **Maintainability**: Tests should be as clear and simple as possible
 - **Coverage**: Aim for high coverage of both happy paths and edge cases
+- **Reproducibility**: Tests should produce the same results given the same inputs
+- **Documentation**: Tests should serve as living documentation of the system's behavior
+
+## Global Test Architecture
+
+### Global State Management
+
+To ensure test isolation and reliability, we use a global mutex for managing shared test state:
+
+```rust
+// In src/core/mod.rs
+lazy_static! {
+    pub static ref SHARED_TEST_ID_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
+/// Resets all global ID counters for tests
+pub fn reset_global_ids() {
+    use crate::core::page::NEXT_PAGE_ID;
+    use crate::core::leaf::NEXT_LEAF_ID;
+    
+    NEXT_PAGE_ID.store(0, std::sync::atomic::Ordering::SeqCst);
+    NEXT_LEAF_ID.store(0, std::sync::atomic::Ordering::SeqCst);
+}
+```
+
+### Test Structure
+
+Each test that modifies global state should follow this pattern:
+
+```rust
+#[tokio::test]
+async fn test_example() {
+    // 1. Acquire the global test mutex
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    
+    // 2. Reset global state
+    reset_global_ids();
+    
+    // 3. Run test code
+    // ...
+    
+    // 4. The mutex is automatically released when _guard goes out of scope
+}
+```
+
+### Async Testing
+
+For async tests, we use `tokio::test` with the multi-threaded runtime:
+
+```rust
+#[tokio::test(flavor = "multi_thread")]
+async fn test_concurrent_operations() {
+    // Test code here
+}
+```
 
 ## Test Types
 
@@ -117,6 +175,47 @@ mod tests {
     }
 }
 ```
+
+## Time-based Testing
+
+### Controlling Time in Tests
+
+For time-dependent tests, we use fixed timestamps to ensure determinism:
+
+```rust
+use chrono::{DateTime, TimeZone, Utc};
+
+fn create_test_timestamps() -> Vec<DateTime<Utc>> {
+    let base_time = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+    vec![
+        base_time,
+        base_time + chrono::Duration::seconds(30),  // 30 seconds later
+        base_time + chrono::Duration::minutes(5),   // 5 minutes later
+        base_time + chrono::Duration::hours(1),     // 1 hour later
+    ]
+}
+```
+
+## Rollup Testing
+
+### Testing Rollup Behavior
+
+When testing rollup functionality, verify:
+
+1. **Page Finalization**
+   - Pages are finalized when they reach max_leaves_per_page
+   - Pages are finalized when they exceed max_page_age_seconds
+   - Finalized pages are properly hashed and stored
+
+2. **Rollup Process**
+   - Child pages are correctly rolled up to parent pages
+   - Merkle roots are recalculated during rollup
+   - The rollup process respects the time hierarchy levels
+
+3. **Active Page Management**
+   - Only one active page per level exists at any time
+   - New pages are created when needed
+   - Active pages correctly accept new leaves
 
 ## Test Data Management
 

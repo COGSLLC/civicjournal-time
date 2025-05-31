@@ -1,0 +1,102 @@
+[time_hierarchy]
+# Time levels configuration in seconds
+# Each level must have a unique name and a duration in seconds
+# Levels must be in ascending order of duration
+levels = [
+    { name = "minute", duration_seconds = 60 },
+    { name = "hour", duration_seconds = 3600 },
+    { name = "day", duration_seconds = 86400 },
+    { name = "month", duration_seconds = 2592000 },  # 30 days
+    { name = "year", duration_seconds = 31536000 },  # 365 days
+    { name = "decade", duration_seconds = 315360000 },  # 10 years
+    { name = "century", duration_seconds = 3153600000 }  # 100 years
+]
+
+[rollup]
+# Maximum number of leaves before triggering a rollup operation
+# This helps control memory usage and query performance
+max_leaves_per_page = 1000
+
+# Maximum age of a page before forcing rollup (in seconds)
+# Older pages will be rolled up to higher time levels
+max_page_age_seconds = 3600  # 1 hour
+
+# Whether to force rollup on graceful shutdown
+# This ensures data consistency but may increase shutdown time
+force_rollup_on_shutdown = true
+
+[storage]
+# Storage type: "memory" or "file"
+# - memory: Stores data in RAM (volatile, fast)
+# - file: Persists data to disk (persistent, slower)
+type = "file"
+
+# Base path for file storage (ignored for memory storage)
+# This directory will be created if it doesn't exist
+base_path = "./data"
+
+# Maximum number of open file handles
+# Increasing this may improve performance for concurrent operations
+max_open_files = 100
+
+[compression]
+# Whether to enable compression
+# Compression reduces storage space but increases CPU usage
+enabled = true
+
+# Compression algorithm to use:
+# - zstd: Good balance of speed and compression ratio (default)
+# - lz4: Very fast compression with good ratio
+# - snappy: Fastest compression with moderate ratio
+# - none: No compression
+algorithm = "zstd"
+
+# Compression level (1-22 for zstd, 0-16 for lz4)
+# Higher values = better compression but slower
+level = 3  # Good balance between speed and compression
+
+[logging]
+# Minimum log level to capture:
+# - trace: Very verbose, includes all details
+# - debug: Debug information for development
+# - info: General operational information (default)
+# - warn: Potentially harmful situations
+# - error: Error events that might still allow the application to continue
+level = "info"
+
+# Whether to output logs to the console
+# Recommended for development and debugging
+console = true
+
+# Whether to write logs to a file
+# Recommended for production environments
+file = false
+
+# Path to the log file (if file logging is enabled)
+# Relative paths are relative to the application's working directory
+file_path = "./civicjournal.log"
+
+[metrics]
+# Whether to enable metrics collection
+# Metrics provide insights into system performance and usage
+enabled = true
+
+# How often to collect and report metrics (in seconds)
+push_interval_seconds = 60
+
+# Endpoint for pushing metrics (if using push-based monitoring)
+# Leave empty to disable pushing metrics
+endpoint = ""
+
+[retention]
+# Whether to enable automatic data retention
+# When enabled, data older than the retention period will be automatically removed
+enabled = false
+
+# Retention period in seconds
+# Set to 0 to keep data forever (default)
+period_seconds = 0
+
+# How often to run the cleanup process (in seconds)
+# More frequent cleanups use more resources but provide more consistent performance
+cleanup_interval_seconds = 3600  # 1 hour
