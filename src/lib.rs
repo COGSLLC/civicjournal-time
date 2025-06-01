@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 /// Public API for interacting with the CivicJournal system.
 pub mod api;
 pub mod config;
+pub mod query;
 /// Core data structures and logic for journal pages, leaves, and Merkle trees.
 pub mod core;
 pub mod error;
@@ -20,6 +21,8 @@ pub mod storage;
 /// Time-related utilities, including hierarchy levels and time units.
 pub mod time;
 pub mod types;
+/// Utilities for testing purposes only, compiled with `#[cfg(test)]`.
+pub mod test_utils;
 
 // Re-export commonly used types
 pub use config::Config;

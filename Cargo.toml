@@ -46,13 +46,15 @@ directories = "6.0.0"  # For finding config files in standard locations
 
 # Compression
 zstd = { version = "0.12", optional = true }
-lz4 = { version = "1.24", optional = true }
+lz4_flex = { version = "0.11", optional = true } # For LZ4 compression
 snap = { version = "1.1", optional = true }  # For Snappy compression
 
 # Concurrency
 parking_lot = { version = "0.12", optional = true }  # More efficient synchronization primitives
 lazy_static = "1.4"  # For static lazy initialization
 dashmap = { version = "5.5.3", optional = true } # For MemoryStorage
+zip = "0.6" # For creating zip archives (backup)
+walkdir = "2" # For directory traversal
 
 [dev-dependencies]
 lazy_static = "1.4.0"
@@ -63,8 +65,8 @@ tempfile = "3.3"
 assert_matches = "1.5.0"
 
 [features]
-async_api = []
-default = ["file-storage", "memory-storage", "zstd-compression", "logging", "async"]
+async_api = ["async"]
+default = ["file-storage", "memory-storage", "zstd-compression", "lz4-compression", "snappy-compression", "logging", "async"]
 
 # Storage backends
 file-storage = ["tokio/fs"]
@@ -72,7 +74,7 @@ memory-storage = ["dep:dashmap"]
 
 # Compression
 zstd-compression = ["dep:zstd"]
-lz4-compression = ["dep:lz4"]
+lz4-compression = ["dep:lz4_flex"]
 snappy-compression = ["dep:snap"]
 no-compression = []
 

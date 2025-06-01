@@ -13,6 +13,7 @@ pub enum RollupRetentionPolicy {
     KeepNPages(usize),
 }
 
+/// Represents a level in the time hierarchy, defining its duration and rollup behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)] // Added for TimeLevel
 pub struct TimeLevel {
     /// Name of the time level (e.g., "minute", "hour")

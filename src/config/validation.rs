@@ -47,7 +47,7 @@ pub fn validate_config(config: &Config) -> Result<(), CJError> {
     validate_retention_config(&config.retention, &config.time_hierarchy)?;
     
     // Cross-section validations
-    validate_cross_section(&config)?;
+    validate_cross_section(config)?;
     
     Ok(())
 }
@@ -305,7 +305,6 @@ fn validate_logging_config(config: &super::LoggingConfig) -> Result<(), CJError>
         // Check if we can open the file for appending
         if let Err(e) = std::fs::OpenOptions::new()
             .create(true)
-            .write(true)
             .append(true)
             .open(&abs_log_path)
         {

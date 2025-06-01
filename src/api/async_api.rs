@@ -1,17 +1,14 @@
 // src/api/async_api.rs
 
 use crate::config::Config;
-use crate::TimeLevel;
-use crate::types::time::RollupConfig; // Keep for now, may be unused directly but part of Config
-use crate::StorageType;
 use crate::core::leaf::JournalLeaf;
-use crate::core::page::PageContentHash;
+use crate::core::page::{JournalPage, PageContentHash};
 use crate::core::time_manager::TimeHierarchyManager;
 use crate::error::{CJError, Result as CJResult};
 use crate::storage::create_storage_backend;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::sync::{Arc, OnceLock}; 
+use std::sync::Arc; 
 
 /// Provides an asynchronous API for interacting with the CivicJournal.
 pub struct Journal {
@@ -27,28 +24,44 @@ impl Journal {
     /// # Arguments
     /// * `config` - A static reference to the global `Config`.
     pub async fn new(config: &'static Config) -> CJResult<Self> {
-        let storage_config = &config.storage;
-        let storage_backend = create_storage_backend(storage_config)
+        let storage_backend = create_storage_backend(config)
             .await
             .map_err(|e| CJError::new(format!("Failed to create storage backend: {}", e)))?;
 
-        // Assuming Config derives Clone for Arc::new(config.clone())
-        // TimeHierarchyManager::new now returns Self, not Result, so remove map_err
         let manager = TimeHierarchyManager::new(Arc::new(config.clone()), Arc::from(storage_backend));
 
         Ok(Self { manager })
     }
 
-    /// Appends a new leaf to the journal.
+    /// Appends a new leaf (an individual record or event) to the journal.
+    ///
+    /// This is the primary method for adding data to the CivicJournal. The method constructs
+    /// a `JournalLeaf` from the provided arguments, then delegates to the `TimeHierarchyManager`
+    /// to add it to the appropriate time-based page. This may trigger page finalization
+    /// and roll-up processes based on the journal's configuration.
     ///
     /// # Arguments
-    /// * `timestamp` - The timestamp for the new leaf.
-    /// * `parent_hash` - Optional hash of a parent content (e.g., another leaf) this leaf is related to.
-    /// * `container_id` - An identifier for the container or entity this leaf belongs to.
-    /// * `data` - The JSON data payload for the leaf.
+    ///
+    /// * `timestamp` - `DateTime<Utc>`: The timestamp for when the event or data represented by this leaf occurred.
+    ///   This is crucial for placing the leaf into the correct time-based page.
+    /// * `parent_hash` - `Option<PageContentHash>`: An optional hash of a preceding `JournalLeaf`'s content
+    ///   (as `PageContentHash::LeafHash`) or a related `JournalPage`'s hash (as `PageContentHash::ThrallPageHash`).
+    ///   This is used to establish a chain or link between related entries. If `None`, the leaf is considered
+    ///   to not have a direct predecessor in this manner.
+    /// * `container_id` - `String`: An identifier for the data container, source, or entity this leaf belongs to
+    ///   (e.g., "user_activity:user_123", "system_logs:module_A").
+    /// * `data` - `serde_json::Value`: The actual data payload for the leaf. This should be a valid JSON value.
     ///
     /// # Returns
-    /// The `LeafHash` of the newly appended leaf if successful.
+    ///
+    /// On success, returns `Ok(PageContentHash::LeafHash(hash))`, where `hash` is the unique SHA256 hash
+    /// of the newly created and appended `JournalLeaf`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CJError` if:
+    /// * The `delta_payload` (derived from `data`) cannot be serialized to bytes for hashing by `JournalLeaf::new`.
+    /// * The `TimeHierarchyManager` fails to add the leaf.
     pub async fn append_leaf(
         &self,
         timestamp: DateTime<Utc>,
@@ -56,18 +69,36 @@ impl Journal {
         container_id: String,
         data: Value,
     ) -> CJResult<PageContentHash> {
-        // Convert Option<PageContentHash> to Option<[u8; 32]> for JournalLeaf::new
         let prev_hash_bytes = parent_hash.map(|content_hash| match content_hash {
             PageContentHash::LeafHash(hash) => hash, 
             PageContentHash::ThrallPageHash(hash) => hash, 
-            // Add other PageContentHash variants if they can be direct parents of a leaf
-            // and their inner hash can be represented as [u8; 32]
-            // e.g. PageContentHash::MerkleRoot(mh) => mh.0,
         });
 
         let leaf = JournalLeaf::new(timestamp, prev_hash_bytes, container_id, data)?;
         self.manager.add_leaf(&leaf).await?;
         Ok(PageContentHash::LeafHash(leaf.leaf_hash))
+    }
+    /// Retrieves a specific `JournalPage` from storage.
+    ///
+    /// # Arguments
+    /// * `level` - The level of the page.
+    /// * `page_id` - The ID of the page.
+    ///
+    /// # Returns
+    /// On success, returns `Ok(JournalPage)`.
+    ///
+    /// # Errors
+    /// Returns `CJError::PageNotFound` if the page does not exist.
+    /// Returns `CJError::StorageError` if there was an issue loading from storage.
+    pub async fn get_page(&self, level: u8, page_id: u64) -> CJResult<JournalPage> {
+        match self.manager.get_page_from_storage(level, page_id).await {
+            Ok(Some(page)) => Ok(page),
+            Ok(None) => Err(CJError::PageNotFound { level, page_id }),
+            Err(e) => Err(CJError::StorageError(format!(
+                "Failed to load page L{}P{}: {}",
+                level, page_id, e
+            ))),
+        }
     }
 }
 
@@ -75,32 +106,19 @@ impl Journal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json; 
-    // Config, RollupConfig, StorageType, TimeLevelConfig are brought in from crate::config at the top level of the file.
-    // Duration, json, OnceLock are also imported at the top level of the file.
+    use crate::config::Config; // Ensure Config is imported for get_rollup_test_config
+    use crate::test_utils::get_test_config; // Use the shared test config
+    use crate::types::time::RollupConfig;
+    use crate::StorageType;
+    use crate::TimeLevel;
+    use std::sync::OnceLock;
+    use chrono::Duration;
+    use serde_json::json;
+    use crate::storage::memory::MemoryStorage; 
+    use crate::core::reset_global_ids; 
+    use crate::core::SHARED_TEST_ID_MUTEX;
 
-    // Helper to get a static config for general tests
-    fn get_test_config() -> &'static Config {
-        static TEST_CONFIG: OnceLock<Config> = OnceLock::new();
-        TEST_CONFIG.get_or_init(|| {
-            let mut config = Config::default();
-            config.storage.storage_type = StorageType::Memory;
-            config.storage.base_path = "".to_string(); 
-            config.time_hierarchy.levels = vec![TimeLevel {
-                name: "L0_general".to_string(),
-                duration_seconds: 60,
-                rollup_config: RollupConfig {
-                    max_leaves_per_page: 10,
-                    max_page_age_seconds: 300, 
-                    force_rollup_on_shutdown: false, 
-                },
-                retention_policy: None,
-            }];
-            config
-        })
-    }
-
-    // Helper to get a static config specifically for rollup tests
+    // Specific config for rollup tests
     fn get_rollup_test_config() -> &'static Config {
         static ROLLUP_TEST_CONFIG: OnceLock<Config> = OnceLock::new();
         ROLLUP_TEST_CONFIG.get_or_init(|| {
@@ -193,12 +211,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_journal_append_triggers_rollup() {
-        let config = get_rollup_test_config(); // Uses max_leaves_per_page = 2 for L0
+        let config = get_rollup_test_config(); 
         let journal = Journal::new(config).await.expect("Failed to create Journal for rollup test");
 
         let base_timestamp = Utc::now();
 
-        // Leaf 1: Goes into L0P0
         let leaf_hash1 = journal.append_leaf(base_timestamp, None, "rollup_trigger_async".to_string(), json!({"event": 1})).await.expect("Append 1 (rollup test) failed");
         if let PageContentHash::LeafHash(hash_bytes) = leaf_hash1 {
             assert_eq!(hash_bytes.len(), 32);
@@ -206,7 +223,6 @@ mod tests {
             panic!("Expected LeafHash variant for leaf_hash1, got {:?}", leaf_hash1);
         }
 
-        // Leaf 2: Fills L0P0, should trigger finalization of L0P0 and rollup to L1
         let timestamp2 = base_timestamp + Duration::milliseconds(10);
         let leaf_hash2 = journal.append_leaf(timestamp2, None, "rollup_trigger_async".to_string(), json!({"event": 2})).await.expect("Append 2 (rollup test) failed");
         if let PageContentHash::LeafHash(hash_bytes) = leaf_hash2 {
@@ -215,7 +231,6 @@ mod tests {
             panic!("Expected LeafHash variant for leaf_hash2, got {:?}", leaf_hash2);
         }
 
-        // Leaf 3: Goes into a new L0 page (L0P1, if L0 page IDs are 0-indexed and increment)
         let timestamp3 = base_timestamp + Duration::milliseconds(20);
         let leaf_hash3 = journal.append_leaf(timestamp3, None, "rollup_trigger_async".to_string(), json!({"event": 3})).await.expect("Append 3 (rollup test) failed");
         if let PageContentHash::LeafHash(hash_bytes) = leaf_hash3 {
@@ -224,9 +239,65 @@ mod tests {
             panic!("Expected LeafHash variant for leaf_hash3, got {:?}", leaf_hash3);
         }
 
-        // The primary assertion here is that all appends succeed without error, even when rollups occur.
-        // Verifying the internal state of TimeHierarchyManager (e.g., specific page IDs or last_finalized_page_ids)
-        // is beyond the scope of the current public Journal API and is covered by core time_manager tests.
         println!("Successfully appended leaves that should trigger rollup (async): {:?}, {:?}, {:?}", leaf_hash1, leaf_hash2, leaf_hash3);
+    }
+
+    #[tokio::test]
+    async fn test_journal_append_leaf_storage_error() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await; 
+
+        let mut config = get_test_config().clone(); 
+        if !config.time_hierarchy.levels.is_empty() {
+            config.time_hierarchy.levels[0].rollup_config.max_leaves_per_page = 1;
+        } else {
+            panic!("Test config has no time hierarchy levels defined!");
+        }
+        
+        let memory_storage = MemoryStorage::new();
+        memory_storage.set_fail_on_store(0, None); 
+
+        reset_global_ids();
+
+        let storage_backend: Arc<dyn crate::storage::StorageBackend> = Arc::new(memory_storage);
+        let manager = TimeHierarchyManager::new(Arc::new(config.clone()), Arc::clone(&storage_backend));
+        let journal = Journal { manager };
+
+        let timestamp = Utc::now();
+        let append_result = journal.append_leaf(
+            timestamp,
+            None,
+            "error_test_async".to_string(),
+            json!({ "event": "storage_should_fail" })
+        ).await;
+
+        assert!(append_result.is_err(), "append_leaf should have returned an error");
+        match append_result.err().unwrap() {
+            CJError::StorageError(msg) => {
+                assert_eq!(msg, format!("Simulated MemoryStorage write failure for any page on L{}", 0), "Error message mismatch. Got: {}", msg);
+            },
+            e => panic!("Expected StorageError, got {:?}", e),
+        }
+        println!("Successfully verified storage error propagation in append_leaf (async).");
+    }
+
+    #[tokio::test]
+    async fn test_journal_get_non_existent_page() {
+        let config = get_test_config(); 
+        let journal = Journal::new(config).await.expect("Failed to create Journal for get_page test");
+
+        let level = 0u8;
+        let page_id = 9999u64; // An ID that is very unlikely to exist
+
+        let result = journal.get_page(level, page_id).await;
+
+        assert!(result.is_err(), "get_page for non-existent page should return an error. Got: {:?}", result);
+        match result.err().unwrap() {
+            CJError::PageNotFound { level: err_level, page_id: err_page_id } => {
+                assert_eq!(err_level, level, "Error level mismatch");
+                assert_eq!(err_page_id, page_id, "Error page_id mismatch");
+            }
+            e => panic!("Expected PageNotFound error, got {:?}", e),
+        }
+        println!("Successfully verified PageNotFound for non-existent page L{}P{} (async).", level, page_id);
     }
 }

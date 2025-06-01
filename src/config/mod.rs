@@ -231,7 +231,7 @@ impl Config {
     /// # Arguments
     ///
     /// * `path` - An optional path to a configuration file. If `None`, the default
-    ///            locations will be searched.
+    ///   locations will be searched.
     ///
     /// # Errors
     ///

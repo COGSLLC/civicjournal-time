@@ -25,13 +25,17 @@ impl fmt::Display for StorageType {
     }
 }
 
-impl StorageType {
+use std::str::FromStr;
+
+impl FromStr for StorageType {
+    type Err = String;
+
     /// Parse a string into a StorageType
-    pub fn from_str(s: &str) -> Option<Self> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "memory" => Some(Self::Memory),
-            "file" => Some(Self::File),
-            _ => None,
+            "memory" => Ok(Self::Memory),
+            "file" => Ok(Self::File),
+            _ => Err(format!("Invalid storage type: '{}'", s)),
         }
     }
 }

@@ -55,9 +55,12 @@ src/
 │   ├── mod.rs        # Time hierarchy management
 │   ├── level.rs      # Time level definitions
 │   └── rollup.rs     # Roll-up logic
-├── api/              # Public API
+├── query/            # Query engine and types
+│   ├── mod.rs        # Query module exports
+│   ├── engine.rs     # QueryEngine implementation
+│   └── types.rs      # Query-related type definitions
+├── api/              # Public API (e.g., HTTP endpoints, if separate from core query logic)
 │   ├── mod.rs        # Public interface
-│   └── query.rs      # Query interface
 └── ffi/              # Foreign Function Interface
     ├── mod.rs        # FFI exports
     ├── c/            # C bindings
@@ -72,9 +75,14 @@ src/
    - Includes metadata and payload
 
 2. **JournalPage**
-   - Groups multiple leaves within a time window
-   - Maintains Merkle tree for integrity
-   - Handles roll-up to higher hierarchy levels
+   - Groups multiple journal entries within a specific time window and hierarchy level.
+   - **Content Storage**: Stores its content in a `content: PageContent` field. `PageContent` is an enum:
+     - `PageContent::Leaves(Vec<JournalLeaf>)`: For Level 0 (L0) pages, stores a vector of full `JournalLeaf` objects.
+     - `PageContent::ThrallHashes(Vec<[u8; 32]>)`: For Level 1+ (L1+) pages, stores a vector of page hashes of its child (thrall) pages from the level below.
+   - The previous `content_hashes: Vec<PageContentHash>` field and the `PageContentHash` enum have been removed.
+   - **Integrity**: Maintains a Merkle root calculated over its `PageContent` (hashes of leaves for L0, or thrall page hashes for L1+).
+   - **Chaining**: Linked to the previous page in the same level via `prev_page_hash`.
+   - Handles roll-up to higher hierarchy levels when finalized.
 
 3. **TimeHierarchy**
    - Manages the 7-level time hierarchy
@@ -82,9 +90,11 @@ src/
    - Implements retention policies
 
 4. **MerkleTree**
-   - Provides cryptographic verification
-   - Supports efficient inclusion proofs
-   - Enables secure state reconstruction
+   - Provides cryptographic verification.
+   - Supports efficient inclusion proofs. The `QueryEngine`'s `get_leaf_inclusion_proof` method dynamically constructs a `MerkleTree`. The tree is built using hashes derived from the `JournalPage`'s `PageContent` (i.e., from `leaf.leaf_hash` for `PageContent::Leaves`, or directly from the `[u8; 32]` hashes for `PageContent::ThrallHashes`).
+   - For L0 pages, if the page containing the leaf is loaded, the full `JournalLeaf` object is directly available from `PageContent::Leaves`. The `get_leaf_inclusion_proof` method can then return this full leaf along with the proof.
+   - The primary challenge for `load_leaf_by_hash` and `get_leaf_inclusion_proof` is efficiently locating the specific L0 page containing the target leaf, especially if it's not in an active page.
+   - Enables secure state reconstruction.
 
 ## Configuration System
 

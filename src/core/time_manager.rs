@@ -7,8 +7,9 @@ use dashmap::DashMap;
 use crate::config::Config;
 use crate::storage::StorageBackend;
 use crate::core::leaf::JournalLeaf;
-use crate::core::page::{JournalPage, PageContentHash};
+use crate::core::page::JournalPage;
 use crate::error::CJError;
+use crate::types::time::RollupRetentionPolicy;
 
 // TODO: Potentially move TimeHierarchyConfig and RollupConfig to a more central types location
 // if they are heavily used by the manager and core logic outside of just config.
@@ -79,6 +80,15 @@ impl TimeHierarchyManager {
     /// Gets the current active page for level 0 for the given leaf, or creates a new one.
     /// This is a simplified version; a more robust impl would check storage for existing pages
     /// that fit the leaf's timestamp if no active page is found or if the active page is not suitable.
+    /// Optionally returns the page ID of the currently active page for a given level.
+    /// Returns None if no page is currently active for that level.
+    pub fn get_current_active_page_id(&self, level: u8) -> Option<u64> {
+        self.active_pages.get(&level).map(|page_entry| page_entry.value().page_id)
+    }
+
+    /// Gets the current active page for level 0 for the given leaf, or creates a new one.
+    /// This is a simplified version; a more robust impl would check storage for existing pages
+    /// that fit the leaf's timestamp if no active page is found or if the active page is not suitable.
     async fn get_or_create_active_page_for_leaf(&self, leaf: &JournalLeaf) -> Result<JournalPage, CJError> {
     println!("[GOCAPL] Called for leaf ts: {}, level: 0", leaf.timestamp);
         let level_idx = 0; // Base level for leaves
@@ -89,13 +99,13 @@ impl TimeHierarchyManager {
         println!("[GOCAPL] Found active page L{}P{} (created: {}, ends: {}, leaves: {}). Leaf ts: {}.", 
                  active_page_entry.level, active_page_entry.page_id, 
                  active_page_entry.creation_timestamp, active_page_entry.end_time, 
-                 active_page_entry.content_hashes.len(), leaf.timestamp);
+                 active_page_entry.content_len(), leaf.timestamp);
             // Check if the current active page is suitable for this leaf
             let is_in_window = leaf.timestamp >= active_page_entry.creation_timestamp && leaf.timestamp < active_page_entry.end_time;
         println!("[GOCAPL] Timestamp check (leaf >= page_start && leaf < page_end): {}", is_in_window);
         if is_in_window {
                 // Check if the page is not full
-            let has_space = active_page_entry.content_hashes.len() < self.config.rollup.max_leaves_per_page;
+            let has_space = active_page_entry.content_len() < self.config.rollup.max_leaves_per_page;
             println!("[GOCAPL] Space check (leaves < max_leaves): {}", has_space);
             if has_space {
                 println!("[GOCAPL] Reusing (from active_pages) page L{}P{}.", active_page_entry.level, active_page_entry.page_id);
@@ -124,7 +134,7 @@ impl TimeHierarchyManager {
                 // 2. Page must not be full.
                 if loaded_page.creation_timestamp == window_start &&
                    loaded_page.end_time == (window_start + level_config.duration()) && // Ensure window matches calculated one
-                   (loaded_page.content_hashes.len()) < self.config.rollup.max_leaves_per_page {
+                   (loaded_page.content_len()) < self.config.rollup.max_leaves_per_page {
                     
                     // Page is suitable for reuse.
                     // The caller (add_leaf) will handle inserting this into active_pages after modification.
@@ -154,11 +164,10 @@ impl TimeHierarchyManager {
         }
 
         let new_page = JournalPage::new(
-            level_idx as u8,
-            prev_hash_for_new_page_opt.map(PageContentHash::ThrallPageHash),
+            level_idx as u8, // The level of the new page
+            prev_hash_for_new_page_opt, // This is already Option<[u8; 32]>
             window_start, // time_window_start for the new page should be the calculated window_start
-            leaf.timestamp, // current_time for creation_timestamp, now passed as leaf_timestamp
-            &self.config // Pass the main config
+            &self.config, // Pass the main config
         );
         println!("[GOCAPL] Proceeding to create new page L{}P{}.", new_page.level, new_page.page_id);
         println!("[GOCAPL] New page creation timestamp: {}", new_page.creation_timestamp);
@@ -177,7 +186,7 @@ impl TimeHierarchyManager {
                     .ok_or_else(|| CJError::ConfigError(crate::config::ConfigError::ValidationError(format!("Time hierarchy level {} not configured.", parent_level_idx))))?;
                 
                 // For parent pages, max_items is from rollup config, not per-level config (which might not exist or apply here)
-                if active_page_entry.content_hashes.len() < self.config.rollup.max_leaves_per_page {
+                if active_page_entry.content_len() < self.config.rollup.max_leaves_per_page {
                     return Ok(active_page_entry.value().clone());
                 }
                 // If full, we'll fall through to create a new one, and the full one should have been finalized by a previous step.
@@ -188,10 +197,9 @@ impl TimeHierarchyManager {
         let prev_hash_for_new_page_opt: Option<[u8; 32]> = self.last_finalized_page_hashes.get(&parent_level_idx).map(|hash_ref| *hash_ref.value());
 
         let new_page = JournalPage::new(
-            parent_level_idx,
-            prev_hash_for_new_page_opt.map(PageContentHash::ThrallPageHash),
+            parent_level_idx, // The level for the new parent page
+            prev_hash_for_new_page_opt, // This is already Option<[u8; 32]>
             window_start, // Page starts at the beginning of its calculated window
-            triggering_timestamp, // Creation timestamp is the trigger time (e.g., end_time of child)
             &self.config,
         );
         Ok(new_page)
@@ -209,44 +217,55 @@ impl TimeHierarchyManager {
         let mut page = self.get_or_create_active_page_for_leaf(leaf).await?;
 
         // Add leaf hash to page
-        page.add_content_hash(PageContentHash::LeafHash(leaf.leaf_hash), leaf.timestamp);
+        page.add_leaf(leaf.clone());
         page.recalculate_merkle_root_and_page_hash(); // Recalculate after adding content
 
-        // level_config was previously fetched here but not used directly.
-        // Max items logic now uses self.config.rollup.max_leaves_per_page
-        // Page window/granularity logic is based on page.start_time and page.end_time or derived from get_page_window.
-        // If specific level configuration (e.g. custom properties beyond duration) is needed in the future,
-        // it would be re-introduced here.
-        self.config.time_hierarchy.levels.get(page.level as usize)
+        let level_config = self.config.time_hierarchy.levels.get(page.level as usize)
             .ok_or_else(|| CJError::ConfigError(crate::config::ConfigError::ValidationError(format!("Time hierarchy level {} not configured.", page.level))))?;
 
         let mut should_finalize = false;
-        let max_items = self.config.rollup.max_leaves_per_page;
-        if page.content_hashes.len() >= max_items && !page.content_hashes.is_empty() {
+        let max_items = level_config.rollup_config.max_leaves_per_page;
+        let max_age_seconds = level_config.rollup_config.max_page_age_seconds;
+
+        // Check for item limit
+        if !page.is_content_empty() && page.content_len() >= max_items {
+            println!("[ADD_LEAF_FINALIZE_CHECK] Page L{}P{} met item limit ({} >= {})", page.level, page.page_id, page.content_len(), max_items);
             should_finalize = true;
         }
-        // A page is also considered "finalized" for adding new leaves if the current leaf's timestamp
-        // would fall outside the page's designated time window. This is implicitly handled by
-        // get_or_create_active_page_for_leaf creating a *new* page if the leaf doesn't fit the current active one.
-        // However, an explicit check against page.end_time might be useful if a page is kept active.
 
-        if leaf.timestamp >= page.end_time { // This condition means leaf belongs to a *new* page window
-            // This case should ideally be handled by get_or_create_active_page_for_leaf returning a new page.
-            // If we reach here with the *same* page object, it implies an issue in page selection logic.
-            // For safety, we can treat it as a finalization trigger for the *current* page if it has content.
-            if !page.content_hashes.is_empty() { // Only finalize if it has some content
-                 should_finalize = true;
+        // Check for age limit if not already finalized by item count
+        if !should_finalize && !page.is_content_empty() && max_age_seconds > 0 { // Only check age if max_age is configured
+            if page.creation_timestamp <= leaf.timestamp { // Ensure leaf.timestamp is not before page creation
+                let page_age = (leaf.timestamp - page.creation_timestamp).num_seconds() as u64;
+                if page_age >= max_age_seconds {
+                    println!("[ADD_LEAF_FINALIZE_CHECK] Page L{}P{} met age limit ({}s >= {}s)", page.level, page.page_id, page_age, max_age_seconds);
+                    should_finalize = true;
+                }
+            } else {
+                // This case (leaf timestamp before page creation) should ideally not happen if page selection is correct.
+                // Log it if it does, but don't finalize based on this anomalous condition.
+                println!("[ADD_LEAF_FINALIZE_CHECK] Warning: Leaf timestamp {} is before page L{}P{} creation_timestamp {}. Age check skipped.", 
+                         leaf.timestamp, page.level, page.page_id, page.creation_timestamp);
             }
         }
 
+        // A page is also considered "finalized" for adding new leaves if the current leaf's timestamp
+        // would fall outside the page's designated time window. This is implicitly handled by
+        // get_or_create_active_page_for_leaf creating a *new* page if the leaf doesn't fit the current active one.
+        // However, if the leaf *just* meets the end_time, it should finalize the current page.
+        if !should_finalize && !page.is_content_empty() && leaf.timestamp >= page.end_time {
+            println!("[ADD_LEAF_FINALIZE_CHECK] Page L{}P{} met end_time due to leaf ts {} >= page end_time {}", page.level, page.page_id, leaf.timestamp, page.end_time);
+            should_finalize = true;
+        }
+
         // Update the active page in the map
-        println!("[ADD_LEAF] Page L{}P{} has {} leaves. Finalize: {}.", page.level, page.page_id, page.content_hashes.len(), should_finalize);
+        println!("[ADD_LEAF] Page L{}P{} has {} leaves. Finalize: {}.", page.level, page.page_id, page.content_len(), should_finalize);
     self.active_pages.insert(page.level, page.clone());
     println!("[ADD_LEAF] Inserted/Updated L{}P{} in active_pages.", page.level, page.page_id);
 
         if should_finalize {
             let page_to_store = page.clone();
-            println!("[GOCAPL] Found active page L{}P{} with {} leaves.", page_to_store.level, page_to_store.page_id, page_to_store.content_hashes.len());
+            println!("[GOCAPL] Found active page L{}P{} with {} leaves.", page_to_store.level, page_to_store.page_id, page_to_store.content_len());
             self.storage.store_page(&page_to_store).await?;
             self.last_finalized_page_ids.insert(page_to_store.level, page_to_store.page_id);
             self.last_finalized_page_hashes.insert(page_to_store.level, page_to_store.page_hash);
@@ -258,7 +277,7 @@ impl TimeHierarchyManager {
             // No immediate storage write unless a specific strategy dictates otherwise (e.g. periodic flush).
         }
 
-        println!("[ADD_LEAF] Finished for leaf ts: {}. Active pages for L0: {:?}", leaf.timestamp, self.active_pages.get(&0u8).map(|p| (p.value().page_id, p.value().content_hashes.len())));
+        println!("[ADD_LEAF] Finished for leaf ts: {}. Active pages for L0: {:?}", leaf.timestamp, self.active_pages.get(&0u8).map(|p| (p.value().page_id, p.value().content_len())));
         Ok(())
     }
 
@@ -278,6 +297,30 @@ impl TimeHierarchyManager {
         self.storage.load_page(level, page_id).await
     }
 
+    /// Retrieves a specific `JournalPage` directly from the storage backend.
+    ///
+    /// This method bypasses any caching or active page management within the `TimeHierarchyManager`
+    /// and directly queries the underlying storage.
+    ///
+    /// # Arguments
+    /// * `level` - The hierarchy level of the page.
+    /// * `page_id` - The ID of the page to retrieve.
+    ///
+    /// # Returns
+    /// Returns a `Result` containing an `Option<JournalPage>`.
+    /// `Ok(Some(page))` if the page is found.
+    /// `Ok(None)` if the page is not found in storage.
+    /// `Err(CJError::StorageError)` if there was an error accessing the storage.
+    pub async fn get_page_from_storage(&self, level: u8, page_id: u64) -> Result<Option<JournalPage>, CJError> {
+        self.storage.load_page(level, page_id).await.map_err(|e| {
+            CJError::StorageError(format!(
+                "Storage backend failed to load page L{}P{}: {}",
+                level, page_id, e
+            ))
+        })
+    }
+
+
     async fn perform_rollup(&self, finalized_page_level: u8, finalized_page_hash: [u8; 32], finalized_page_end_time: DateTime<Utc>) -> Result<(), CJError> {
         let parent_level_idx = finalized_page_level + 1;
 
@@ -288,19 +331,19 @@ impl TimeHierarchyManager {
         }
 
         let mut parent_page = self.get_or_create_active_parent_page(parent_level_idx, finalized_page_end_time).await?;
-        parent_page.add_content_hash(PageContentHash::ThrallPageHash(finalized_page_hash), finalized_page_end_time);
+        parent_page.add_thrall_hash(finalized_page_hash, finalized_page_end_time);
         parent_page.recalculate_merkle_root_and_page_hash();
         // Determine if this parent page itself needs to be finalized.
         let mut should_finalize_parent = false;
         let max_items_parent = self.config.rollup.max_leaves_per_page;
-        if parent_page.content_hashes.len() >= max_items_parent && !parent_page.content_hashes.is_empty() {
+        if parent_page.content_len() >= max_items_parent && !parent_page.is_content_empty() {
             should_finalize_parent = true;
         }
 
         // Check max_page_age_seconds for the parent page.
         // The 'age' is relative to its own creation_timestamp and the timestamp of the latest content added (finalized_page_end_time).
         let parent_page_age_seconds = (finalized_page_end_time - parent_page.creation_timestamp).num_seconds();
-        if parent_page_age_seconds >= self.config.rollup.max_page_age_seconds as i64 && !parent_page.content_hashes.is_empty() {
+        if parent_page_age_seconds >= self.config.rollup.max_page_age_seconds as i64 && !parent_page.is_content_empty() {
             should_finalize_parent = true;
         }
         
@@ -324,71 +367,142 @@ impl TimeHierarchyManager {
 
     /// Applies retention policies to delete old pages based on configuration.
     pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
-        if !self.config.retention.enabled {
-            // Using println for now; replace with proper logging if available
-            println!("[Retention] Policies disabled, skipping cleanup.");
-            return Ok(());
-        }
+        let now = chrono::Utc::now();
+        println!("[Retention] Applying per-level policies at {}.
+", now);
 
-        let retention_period_seconds = self.config.retention.period_seconds;
-        if retention_period_seconds == 0 {
-            println!("[Retention] Period is 0, skipping cleanup. Consider this a misconfiguration.");
-            return Ok(()); 
-        }
-        let retention_duration = chrono::Duration::seconds(retention_period_seconds as i64);
-        let now = Utc::now();
-
-        println!("[Retention] Applying policies. Max age: {} seconds.", retention_period_seconds);
-
-        for level_idx in 0..self.config.time_hierarchy.levels.len() {
+        for (level_idx, level_config) in self.config.time_hierarchy.levels.iter().enumerate() {
             let level = level_idx as u8;
-            println!("[Retention] Checking level {}.
-", level);
+            println!("[Retention] Processing L{} ({})
+", level, level_config.name);
 
-            let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
-                Ok(summaries) => summaries,
-                Err(e) => {
-                    eprintln!("[Retention] Error listing finalized pages for L{}: {}. Skipping level.", level, e);
-                    continue; // Skip this level if summaries can't be listed
+            let effective_policy = match &level_config.retention_policy {
+                Some(specific_policy) => {
+                    println!("[Retention] L{}: Using specific policy: {:?}
+", level, specific_policy);
+                    specific_policy.clone()
+                }
+                None => {
+                    if self.config.retention.enabled && self.config.retention.period_seconds > 0 {
+                        println!("[Retention] L{}: No specific policy, using global: DeleteAfterSecs({}).
+", level, self.config.retention.period_seconds);
+                        RollupRetentionPolicy::DeleteAfterSecs(self.config.retention.period_seconds)
+                    } else {
+                        println!("[Retention] L{}: No specific policy, global retention disabled or period is 0. Defaulting to KeepIndefinitely.
+", level);
+                        RollupRetentionPolicy::KeepIndefinitely
+                    }
                 }
             };
-            
-            if page_summaries.is_empty() {
-                println!("[Retention] No finalized pages found for level {}.
+
+            match effective_policy {
+                RollupRetentionPolicy::KeepIndefinitely => {
+                    println!("[Retention] L{}: Policy is KeepIndefinitely. No pages will be deleted.
 ", level);
-                continue;
-            }
-
-            println!("[Retention] Found {} finalized pages for level {}.
-", page_summaries.len(), level);
-
-            for summary in page_summaries {
-                // Ensure end_time is not in the future, which would make page_age negative
-                if summary.end_time > now {
-                    println!("[Retention] Skipping L{}/{} as its end_time {} is in the future.", level, summary.page_id, summary.end_time);
-                    continue;
                 }
-
-                let page_age = now.signed_duration_since(summary.end_time);
-                if page_age > retention_duration {
-                    println!(
-                        "[Retention] Deleting L{}/{} (end_time: {}, age: {}s)",
-                        level,
-                        summary.page_id,
-                        summary.end_time,
-                        page_age.num_seconds()
-                    );
-                    if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
-                        eprintln!("[Retention] Error deleting L{}/{}: {}. Continuing with next page.", level, summary.page_id, e);
-                        // Decide if one error should stop all retention or just log and continue
+                RollupRetentionPolicy::DeleteAfterSecs(secs) => {
+                    if secs == 0 {
+                        println!("[Retention] L{}: Policy is DeleteAfterSecs(0). Skipping as this implies immediate deletion or misconfiguration.
+", level);
+                        continue;
                     }
-                } else {
-                    // Optional: Log pages that are kept
-                    // println!("[Retention] Keeping L{}/{} (end_time: {}, age: {}s)", level, summary.page_id, summary.end_time, page_age.num_seconds());
+                    let retention_duration = chrono::Duration::seconds(secs as i64);
+                    println!("[Retention] L{}: Policy is DeleteAfterSecs({}s). Max age: {}.
+", level, secs, retention_duration);
+
+                    let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
+                        Ok(summaries) => summaries,
+                        Err(e) => {
+                            eprintln!("[Retention] L{}: Error listing finalized pages: {}. Skipping level.
+", level, e);
+                            continue;
+                        }
+                    };
+
+                    if page_summaries.is_empty() {
+                        println!("[Retention] L{}: No finalized pages found.
+", level);
+                        continue;
+                    }
+                    println!("[Retention] L{}: Found {} finalized pages.
+", level, page_summaries.len());
+
+                    for summary in page_summaries {
+                        if summary.end_time > now {
+                            println!("[Retention] L{}/{}: Skipping, end_time {} is in the future.
+", level, summary.page_id, summary.end_time);
+                            continue;
+                        }
+                        let page_age = now.signed_duration_since(summary.end_time);
+                        if page_age > retention_duration {
+                            println!("[Retention] L{}/{}: Deleting (end_time: {}, age: {}s)
+", level, summary.page_id, summary.end_time, page_age.num_seconds());
+                            if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
+                                eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.
+", level, summary.page_id, e);
+                            }
+                        }
+                    }
+                }
+                RollupRetentionPolicy::KeepNPages(n) => {
+                    if n == 0 {
+                        println!("[Retention] L{}: Policy is KeepNPages(0). Deleting all pages.
+", level);
+                        let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
+                            Ok(summaries) => summaries,
+                            Err(e) => {
+                                eprintln!("[Retention] L{}: Error listing for KeepNPages(0): {}. Skipping.
+", level, e);
+                                continue;
+                            }
+                        };
+                        for summary in page_summaries {
+                            println!("[Retention] L{}/{}: Deleting (KeepNPages(0))
+", level, summary.page_id);
+                            if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
+                                eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.
+", level, summary.page_id, e);
+                            }
+                        }
+                        continue;
+                    }
+
+                    println!("[Retention] L{}: Policy is KeepNPages({}).
+", level, n);
+                    let mut page_summaries = match self.storage.list_finalized_pages_summary(level).await {
+                        Ok(summaries) => summaries,
+                        Err(e) => {
+                            eprintln!("[Retention] L{}: Error listing finalized pages: {}. Skipping level.
+", level, e);
+                            continue;
+                        }
+                    };
+
+                    if page_summaries.len() <= n {
+                        println!("[Retention] L{}: Found {} pages, which is <= {}. No pages will be deleted.
+", level, page_summaries.len(), n);
+                        continue;
+                    }
+
+                    page_summaries.sort_unstable_by_key(|s| s.end_time);
+
+                    let num_to_delete = page_summaries.len() - n;
+                    println!("[Retention] L{}: Found {} pages. Deleting {} oldest pages to keep {}.
+", level, page_summaries.len(), num_to_delete, n);
+
+                    for summary_to_delete in page_summaries.iter().take(num_to_delete) {
+                        println!("[Retention] L{}/{}: Deleting (KeepNPages, end_time: {})
+", level, summary_to_delete.page_id, summary_to_delete.end_time);
+                        if let Err(e) = self.storage.delete_page(level, summary_to_delete.page_id).await {
+                            eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.
+", level, summary_to_delete.page_id, e);
+                        }
+                    }
                 }
             }
         }
-        println!("[Retention] Policies application complete.");
+        println!("[Retention] Per-level policies application complete.
+");
         Ok(())
     }
 }
@@ -397,7 +511,7 @@ impl TimeHierarchyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert_matches::assert_matches;
+    use crate::core::page::PageContent;
     use crate::types::time::{RollupConfig, TimeHierarchyConfig, TimeLevel};
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
     use crate::storage::memory::MemoryStorage; // For creating an instance
@@ -417,7 +531,6 @@ mod tests {
             level,
             None, // prev_page_hash
             time_window_start, // this determines end_time based on level duration
-            time_window_start, // creation_timestamp for the page itself
             config
         );
         // Restore NEXT_PAGE_ID if other tests depend on its sequential flow without manual setting like this
@@ -427,16 +540,35 @@ mod tests {
     }
 
     // Helper to create a config for testing, allowing retention customization
-    fn create_test_config(retention_enabled: bool, retention_period_seconds: u64) -> Config {
+    fn create_test_config(
+        retention_enabled: bool, 
+        retention_period_seconds: u64,
+        l0_policy: Option<RollupRetentionPolicy>,
+        l1_policy: Option<RollupRetentionPolicy>
+    ) -> Config {
         Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
                     TimeLevel {
-                            rollup_config: RollupConfig::default(),
-                            retention_policy: None, name: "seconds".to_string(), duration_seconds: 1 },
+                        rollup_config: RollupConfig {
+                            max_leaves_per_page: 1,
+                            max_page_age_seconds: 1000, // Match global test default
+                            force_rollup_on_shutdown: false,
+                        },
+                        retention_policy: l0_policy,
+                        name: "seconds".to_string(),
+                        duration_seconds: 1
+                    },
                     TimeLevel {
-                            rollup_config: RollupConfig::default(),
-                            retention_policy: None, name: "minutes".to_string(), duration_seconds: 60 },
+                        rollup_config: RollupConfig {
+                            max_leaves_per_page: 1,
+                            max_page_age_seconds: 1000, // Match global test default
+                            force_rollup_on_shutdown: false,
+                        },
+                        retention_policy: l1_policy,
+                        name: "minutes".to_string(),
+                        duration_seconds: 60
+                    },
                 ],
             },
             rollup: RollupConfig { // Sensible defaults for most tests
@@ -448,7 +580,7 @@ mod tests {
             retention: RetentionConfig {
                 enabled: retention_enabled,
                 period_seconds: retention_period_seconds,
-                cleanup_interval_seconds: 300, // Added missing field
+                cleanup_interval_seconds: 300, // Default, not typically used in these specific tests
             },
             compression: Default::default(),
             logging: Default::default(),
@@ -459,7 +591,7 @@ mod tests {
     // Helper to create a TimeHierarchyManager with MemoryStorage
     fn create_test_manager() -> (TimeHierarchyManager, Arc<MemoryStorage>) {
         // Default to retention disabled for general tests not focused on retention
-        let config = Arc::new(create_test_config(false, 0)); 
+        let config = Arc::new(create_test_config(false, 0, None, None)); 
         let storage = Arc::new(MemoryStorage::new());
         let manager = TimeHierarchyManager::new(config, storage.clone());
         (manager, storage)
@@ -480,14 +612,26 @@ mod tests {
     
             let stored_l0_p0_leaf1 = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should be in storage after 1st leaf");
             assert_eq!(stored_l0_p0_leaf1.page_id, 0);
-            assert_eq!(stored_l0_p0_leaf1.content_hashes.len(), 1);
-            assert_matches!(stored_l0_p0_leaf1.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf1.leaf_hash);
+            assert_eq!(stored_l0_p0_leaf1.content_len(), 1);
+            match &stored_l0_p0_leaf1.content {
+                PageContent::Leaves(leaves) => {
+                    assert_eq!(leaves.len(), 1, "L0P0 (ID 0) content length mismatch");
+                    assert_eq!(leaves[0].leaf_hash, leaf1.leaf_hash, "L0P0 (ID 0) leaf hash mismatch");
+                }
+                _ => panic!("Expected Leaves for stored_l0_p0_leaf1, found {:?}", stored_l0_p0_leaf1.content),
+            }
             assert!(manager.active_pages.get(&0u8).is_none(), "No L0 page should be active after L0P0 finalization");
     
             let stored_l1_p1_leaf1 = storage.load_page(1, 1).await.unwrap().expect("L1P1 (ID 1) should be stored after L0P0 rollup and L1 finalization");
             assert_eq!(stored_l1_p1_leaf1.page_id, 1); // L1 page ID is 1
-            assert_eq!(stored_l1_p1_leaf1.content_hashes.len(), 1, "Stored L1P1 should have 1 thrall hash from L0P0");
-            assert_matches!(stored_l1_p1_leaf1.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p0_leaf1.page_hash);
+            assert_eq!(stored_l1_p1_leaf1.content_len(), 1, "Stored L1P1 should have 1 thrall hash from L0P0");
+            match &stored_l1_p1_leaf1.content {
+                PageContent::ThrallHashes(hashes) => {
+                    assert_eq!(hashes.len(), 1, "L1P1 (ID 1) content length mismatch");
+                    assert_eq!(hashes[0], stored_l0_p0_leaf1.page_hash, "L1P1 (ID 1) thrall hash mismatch");
+                }
+                _ => panic!("Expected ThrallHashes for stored_l1_p1_leaf1, found {:?}", stored_l1_p1_leaf1.content),
+            }
             assert!(manager.active_pages.get(&1u8).is_none(), "No L1 page should be active after L1P1 finalization (L1 is highest configured level)");
             assert!(manager.active_pages.get(&2u8).is_none(), "No L2 page should exist as L2 is not configured by create_test_manager");
     
@@ -498,28 +642,52 @@ mod tests {
     
             // Check L0P0 (ID 0) - should still have only leaf1. stored_l0_p0_leaf1 is from the first leaf's assertions.
             assert_eq!(stored_l0_p0_leaf1.page_id, 0);
-            assert_eq!(stored_l0_p0_leaf1.content_hashes.len(), 1, "L0P0 (ID 0) should still only have 1 leaf (leaf1)");
-            assert_matches!(stored_l0_p0_leaf1.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf1.leaf_hash); // leaf1 is from first leaf's setup
+            assert_eq!(stored_l0_p0_leaf1.content_len(), 1, "L0P0 (ID 0) should still only have 1 leaf (leaf1)");
+            match &stored_l0_p0_leaf1.content { // Re-assertion on L0P0 (ID 0)
+                PageContent::Leaves(leaves) => {
+                    assert_eq!(leaves.len(), 1, "L0P0 (ID 0) re-assertion content length mismatch");
+                    assert_eq!(leaves[0].leaf_hash, leaf1.leaf_hash, "L0P0 (ID 0) re-assertion leaf hash mismatch");
+                }
+                _ => panic!("Expected Leaves for stored_l0_p0_leaf1 (re-assertion), found {:?}", stored_l0_p0_leaf1.content),
+            }
     
             // Check L0P2 (ID 2) - created for leaf2
             let stored_l0_p2 = storage.load_page(0, 2).await.unwrap().expect("L0P2 (ID 2) should be in storage after leaf2");
             assert_eq!(stored_l0_p2.page_id, 2);
-            assert_eq!(stored_l0_p2.content_hashes.len(), 1, "L0P2 (ID 2) should have 1 leaf (leaf2)");
-            assert_matches!(stored_l0_p2.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf2.leaf_hash);
-            assert_eq!(stored_l0_p2.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l0_p0_leaf1.page_hash)), "L0P2 prev_page_hash should be L0P0's hash");
+            assert_eq!(stored_l0_p2.content_len(), 1, "L0P2 (ID 2) should have 1 leaf (leaf2)");
+            match &stored_l0_p2.content {
+                PageContent::Leaves(leaves) => {
+                    assert_eq!(leaves.len(), 1, "L0P2 (ID 2) content length mismatch");
+                    assert_eq!(leaves[0].leaf_hash, leaf2.leaf_hash, "L0P2 (ID 2) leaf hash mismatch");
+                }
+                _ => panic!("Expected Leaves for stored_l0_p2, found {:?}", stored_l0_p2.content),
+            }
+            assert_eq!(stored_l0_p2.prev_page_hash, Some(stored_l0_p0_leaf1.page_hash), "L0P2 prev_page_hash should be L0P0's hash");
             assert!(manager.active_pages.get(&0u8).is_none(), "No L0 page should be active");
     
             // Check L1P1 (ID 1) - from L0P0 rollup. stored_l1_p1_leaf1 is from the first leaf's assertions (Page ID 1).
             assert_eq!(stored_l1_p1_leaf1.page_id, 1);
-            assert_eq!(stored_l1_p1_leaf1.content_hashes.len(), 1, "Stored L1P1 (ID 1) should have 1 thrall hash from L0P0");
-            assert_matches!(stored_l1_p1_leaf1.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p0_leaf1.page_hash);
+            assert_eq!(stored_l1_p1_leaf1.content_len(), 1, "Stored L1P1 (ID 1) should have 1 thrall hash from L0P0");
+            match &stored_l1_p1_leaf1.content { // Re-assertion on L1P1 (ID 1)
+                PageContent::ThrallHashes(hashes) => {
+                    assert_eq!(hashes.len(), 1, "L1P1 (ID 1) re-assertion content length mismatch");
+                    assert_eq!(hashes[0], stored_l0_p0_leaf1.page_hash, "L1P1 (ID 1) re-assertion thrall hash mismatch");
+                }
+                _ => panic!("Expected ThrallHashes for stored_l1_p1_leaf1 (re-assertion), found {:?}", stored_l1_p1_leaf1.content),
+            }
     
             // Check L1P3 (ID 3) - from L0P2 rollup, should be stored
             let stored_l1_p3 = storage.load_page(1, 3).await.unwrap().expect("L1P3 (ID 3) from L0P2 rollup should be stored");
             assert_eq!(stored_l1_p3.page_id, 3);
-            assert_eq!(stored_l1_p3.content_hashes.len(), 1, "Stored L1P3 should have 1 thrall hash from L0P2");
-            assert_matches!(stored_l1_p3.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p2.page_hash);
-            assert_eq!(stored_l1_p3.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l1_p1_leaf1.page_hash)), "L1P3 prev_page_hash should be L1P1's hash");
+            assert_eq!(stored_l1_p3.content_len(), 1, "Stored L1P3 should have 1 thrall hash from L0P2");
+            match &stored_l1_p3.content {
+                PageContent::ThrallHashes(hashes) => {
+                    assert_eq!(hashes.len(), 1, "L1P3 (ID 3) content length mismatch");
+                    assert_eq!(hashes[0], stored_l0_p2.page_hash, "L1P3 (ID 3) thrall hash mismatch");
+                }
+                _ => panic!("Expected ThrallHashes for stored_l1_p3, found {:?}", stored_l1_p3.content),
+            }
+            assert_eq!(stored_l1_p3.prev_page_hash, Some(stored_l1_p1_leaf1.page_hash), "L1P3 prev_page_hash should be L1P1's hash");
             assert!(manager.active_pages.get(&1u8).is_none(), "No L1 page should be active");
             assert!(manager.active_pages.get(&2u8).is_none(), "No L2 page should exist");
     
@@ -533,17 +701,29 @@ mod tests {
             // Check L0P4 (ID 4) - created for leaf3
             let stored_l0_p4 = storage.load_page(0, 4).await.unwrap().expect("L0P4 (ID 4) should be in storage after leaf3");
             assert_eq!(stored_l0_p4.page_id, 4);
-            assert_eq!(stored_l0_p4.content_hashes.len(), 1, "L0P4 (ID 4) should have 1 leaf (leaf3)");
-            assert_matches!(stored_l0_p4.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf3.leaf_hash);
-            assert_eq!(stored_l0_p4.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l0_p2.page_hash)), "L0P4 prev_page_hash should be L0P2's hash");
+            assert_eq!(stored_l0_p4.content_len(), 1, "L0P4 (ID 4) should have 1 leaf (leaf3)");
+            match &stored_l0_p4.content {
+                PageContent::Leaves(leaves) => {
+                    assert_eq!(leaves.len(), 1, "L0P4 (ID 4) content length mismatch");
+                    assert_eq!(leaves[0].leaf_hash, leaf3.leaf_hash, "L0P4 (ID 4) leaf hash mismatch");
+                }
+                _ => panic!("Expected Leaves for stored_l0_p4, found {:?}", stored_l0_p4.content),
+            }
+            assert_eq!(stored_l0_p4.prev_page_hash, Some(stored_l0_p2.page_hash), "L0P4 prev_page_hash should be L0P2's hash");
             assert!(manager.active_pages.get(&0u8).is_none(), "No L0 page should be active");
             
             // Check L1P5 (ID 5) - from L0P4 rollup, should be stored
             let stored_l1_p5 = storage.load_page(1, 5).await.unwrap().expect("L1P5 (ID 5) from L0P4 rollup should be stored");
             assert_eq!(stored_l1_p5.page_id, 5);
-            assert_eq!(stored_l1_p5.content_hashes.len(), 1, "Stored L1P5 should have 1 thrall hash from L0P4");
-            assert_matches!(stored_l1_p5.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p4.page_hash);
-            assert_eq!(stored_l1_p5.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l1_p3.page_hash)), "L1P5 prev_page_hash should be L1P3's hash");
+            assert_eq!(stored_l1_p5.content_len(), 1, "Stored L1P5 should have 1 thrall hash from L0P4");
+            match &stored_l1_p5.content {
+                PageContent::ThrallHashes(hashes) => {
+                    assert_eq!(hashes.len(), 1, "L1P5 (ID 5) content length mismatch");
+                    assert_eq!(hashes[0], stored_l0_p4.page_hash, "L1P5 (ID 5) thrall hash mismatch");
+                }
+                _ => panic!("Expected ThrallHashes for stored_l1_p5, found {:?}", stored_l1_p5.content),
+            }
+            assert_eq!(stored_l1_p5.prev_page_hash, Some(stored_l1_p3.page_hash), "L1P5 prev_page_hash should be L1P3's hash");
             assert!(manager.active_pages.get(&1u8).is_none(), "No L1 page should be active");
         }
 
@@ -561,14 +741,26 @@ mod tests {
 
         let stored_l0_p0_leaf1 = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should be in storage after 1st leaf");
         assert_eq!(stored_l0_p0_leaf1.page_id, 0);
-        assert_eq!(stored_l0_p0_leaf1.content_hashes.len(), 1);
-        assert_matches!(stored_l0_p0_leaf1.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf1.leaf_hash);
+        assert_eq!(stored_l0_p0_leaf1.content_len(), 1);
+        match &stored_l0_p0_leaf1.content {
+            PageContent::Leaves(leaves) => {
+                assert_eq!(leaves.len(), 1, "L0P0 (ID 0) content length mismatch");
+                assert_eq!(leaves[0].leaf_hash, leaf1.leaf_hash, "L0P0 (ID 0) leaf hash mismatch");
+            }
+            _ => panic!("Expected Leaves for stored_l0_p0_leaf1, found {:?}", stored_l0_p0_leaf1.content),
+        }
         assert!(manager.active_pages.get(&0u8).is_none(), "No L0 page should be active after L0P0 finalization");
 
         let stored_l1_p0_leaf1 = storage.load_page(1, 1).await.unwrap().expect("L1P0 (ID 1) should be stored after L0P0 rollup and L1 finalization");
         assert_eq!(stored_l1_p0_leaf1.page_id, 1);
-        assert_eq!(stored_l1_p0_leaf1.content_hashes.len(), 1, "Stored L1P0 should have 1 thrall hash from L0P0");
-        assert_matches!(stored_l1_p0_leaf1.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p0_leaf1.page_hash); // stored_l0_p0_leaf1 was defined for the first leaf
+        assert_eq!(stored_l1_p0_leaf1.content_len(), 1, "Stored L1P0 should have 1 thrall hash from L0P0");
+        match &stored_l1_p0_leaf1.content {
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 1, "L1P0 (ID 1) content length mismatch in test_single_rollup_max_items");
+                assert_eq!(hashes[0], stored_l0_p0_leaf1.page_hash, "L1P0 (ID 1) thrall hash mismatch in test_single_rollup_max_items");
+            }
+            _ => panic!("Expected ThrallHashes for stored_l1_p0_leaf1 in test_single_rollup_max_items, found {:?}", stored_l1_p0_leaf1.content),
+        }
         assert!(manager.active_pages.get(&1u8).is_none(), "No L1 page should be active after L1P0 finalization (L1 is highest configured level)");
         assert!(manager.active_pages.get(&2u8).is_none(), "No L2 page should exist as L2 is not configured by create_test_manager");
 
@@ -579,28 +771,52 @@ mod tests {
 
         // Check L0P0 (ID 0) - should still have only leaf1. stored_l0_p0_leaf1 is from the first leaf's assertions.
         assert_eq!(stored_l0_p0_leaf1.page_id, 0);
-        assert_eq!(stored_l0_p0_leaf1.content_hashes.len(), 1, "L0P0 (ID 0) should still only have 1 leaf (leaf1)");
-        assert_matches!(stored_l0_p0_leaf1.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf1.leaf_hash); // leaf1 is from first leaf's setup
+        assert_eq!(stored_l0_p0_leaf1.content_len(), 1, "L0P0 (ID 0) should still only have 1 leaf (leaf1)");
+        match &stored_l0_p0_leaf1.content { // Re-assertion for L0P0 after leaf2 added
+            PageContent::Leaves(leaves) => {
+                assert_eq!(leaves.len(), 1, "L0P0 (ID 0) content length mismatch (re-assertion)");
+                assert_eq!(leaves[0].leaf_hash, leaf1.leaf_hash, "L0P0 (ID 0) leaf hash mismatch (re-assertion)");
+            }
+            _ => panic!("Expected Leaves for stored_l0_p0_leaf1 (re-assertion), found {:?}", stored_l0_p0_leaf1.content),
+        } // leaf1 is from first leaf's setup
 
         // Check L0P2 (ID 2) - created for leaf2
         let stored_l0_p2 = storage.load_page(0, 2).await.unwrap().expect("L0P2 (ID 2) should be in storage after leaf2");
         assert_eq!(stored_l0_p2.page_id, 2);
-        assert_eq!(stored_l0_p2.content_hashes.len(), 1, "L0P2 (ID 2) should have 1 leaf (leaf2)");
-        assert_matches!(stored_l0_p2.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf2.leaf_hash);
-        assert_eq!(stored_l0_p2.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l0_p0_leaf1.page_hash)), "L0P2 prev_page_hash should be L0P0's hash");
+        assert_eq!(stored_l0_p2.content_len(), 1, "L0P2 (ID 2) should have 1 leaf (leaf2)");
+        match &stored_l0_p2.content {
+            PageContent::Leaves(leaves) => {
+                assert_eq!(leaves.len(), 1, "L0P2 (ID 2) content length mismatch");
+                assert_eq!(leaves[0].leaf_hash, leaf2.leaf_hash, "L0P2 (ID 2) leaf hash mismatch");
+            }
+            _ => panic!("Expected Leaves for stored_l0_p2, found {:?}", stored_l0_p2.content),
+        }
+        assert_eq!(stored_l0_p2.prev_page_hash, Some(stored_l0_p0_leaf1.page_hash), "L0P2 prev_page_hash should be L0P0's hash");
         assert!(manager.active_pages.get(&0u8).is_none(), "No L0 page should be active");
 
         // Check L1P1 (ID 1) - from L0P0 rollup. stored_l1_p0_leaf1 is from the first leaf's assertions (Page ID 1).
         assert_eq!(stored_l1_p0_leaf1.page_id, 1);
-        assert_eq!(stored_l1_p0_leaf1.content_hashes.len(), 1, "Stored L1P1 (ID 1) should have 1 thrall hash from L0P0");
-        assert_matches!(stored_l1_p0_leaf1.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p0_leaf1.page_hash);
+        assert_eq!(stored_l1_p0_leaf1.content_len(), 1, "Stored L1P1 (ID 1) should have 1 thrall hash from L0P0");
+        match &stored_l1_p0_leaf1.content { // This is page ID 1 (stored_l1_p0_leaf1)
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 1, "Stored L1P1 (ID 1) content length mismatch (re-assertion)");
+                assert_eq!(hashes[0], stored_l0_p0_leaf1.page_hash, "Stored L1P1 (ID 1) thrall hash mismatch (re-assertion)");
+            }
+            _ => panic!("Expected ThrallHashes for stored_l1_p0_leaf1 (re-assertion), found {:?}", stored_l1_p0_leaf1.content),
+        }
 
         // Check L1P3 (ID 3) - from L0P2 rollup, should be stored
         let stored_l1_p3 = storage.load_page(1, 3).await.unwrap().expect("L1P3 (ID 3) from L0P2 rollup should be stored");
         assert_eq!(stored_l1_p3.page_id, 3);
-        assert_eq!(stored_l1_p3.content_hashes.len(), 1, "Stored L1P3 should have 1 thrall hash from L0P2");
-        assert_matches!(stored_l1_p3.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p2.page_hash);
-        assert_eq!(stored_l1_p3.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l1_p0_leaf1.page_hash)), "L1P3 prev_page_hash should be L1P1's hash"); // Corrected variable
+        assert_eq!(stored_l1_p3.content_len(), 1, "Stored L1P3 should have 1 thrall hash from L0P2");
+        match &stored_l1_p3.content {
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 1, "Stored L1P3 (ID 3) content length mismatch");
+                assert_eq!(hashes[0], stored_l0_p2.page_hash, "Stored L1P3 (ID 3) thrall hash mismatch");
+            }
+            _ => panic!("Expected ThrallHashes for stored_l1_p3, found {:?}", stored_l1_p3.content),
+        }
+        assert_eq!(stored_l1_p3.prev_page_hash, Some(stored_l1_p0_leaf1.page_hash), "L1P3 prev_page_hash should be L1P1's hash"); // Corrected variable
         assert!(manager.active_pages.get(&1u8).is_none(), "No L1 page should be active");
         assert!(manager.active_pages.get(&2u8).is_none(), "No L2 page should exist");
 
@@ -615,17 +831,29 @@ mod tests {
         // Check L0P4 (ID 4) - created for leaf3
         let stored_l0_p4 = storage.load_page(0, 4).await.unwrap().expect("L0P4 (ID 4) should be in storage after leaf3");
         assert_eq!(stored_l0_p4.page_id, 4);
-        assert_eq!(stored_l0_p4.content_hashes.len(), 1, "L0P4 (ID 4) should have 1 leaf (leaf3)");
-        assert_matches!(stored_l0_p4.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf3.leaf_hash);
-        assert_eq!(stored_l0_p4.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l0_p2.page_hash)), "L0P4 prev_page_hash should be L0P2's hash"); // Links to L0P2
+        assert_eq!(stored_l0_p4.content_len(), 1, "L0P4 (ID 4) should have 1 leaf (leaf3)");
+        match &stored_l0_p4.content {
+            PageContent::Leaves(leaves) => {
+                assert_eq!(leaves.len(), 1, "L0P4 (ID 4) content length mismatch");
+                assert_eq!(leaves[0].leaf_hash, leaf3.leaf_hash, "L0P4 (ID 4) leaf hash mismatch");
+            }
+            _ => panic!("Expected Leaves for stored_l0_p4, found {:?}", stored_l0_p4.content),
+        }
+        assert_eq!(stored_l0_p4.prev_page_hash, Some(stored_l0_p2.page_hash), "L0P4 prev_page_hash should be L0P2's hash"); // Links to L0P2
         assert!(manager.active_pages.get(&0u8).is_none(), "No L0 page should be active");
 
         // Check L1P5 (ID 5) - from L0P4 rollup, should be stored
         let stored_l1_p5 = storage.load_page(1, 5).await.unwrap().expect("L1P5 (ID 5) from L0P4 rollup should be stored");
         assert_eq!(stored_l1_p5.page_id, 5);
-        assert_eq!(stored_l1_p5.content_hashes.len(), 1, "Stored L1P5 should have 1 thrall hash from L0P4");
-        assert_matches!(stored_l1_p5.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_p4.page_hash);
-        assert_eq!(stored_l1_p5.prev_page_hash, Some(PageContentHash::ThrallPageHash(stored_l1_p3.page_hash)), "L1P5 prev_page_hash should be L1P3's hash"); // Links to L1P3
+        assert_eq!(stored_l1_p5.content_len(), 1, "Stored L1P5 should have 1 thrall hash from L0P4");
+        match &stored_l1_p5.content {
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 1, "Stored L1P5 (ID 5) content length mismatch");
+                assert_eq!(hashes[0], stored_l0_p4.page_hash, "Stored L1P5 (ID 5) thrall hash mismatch");
+            }
+            _ => panic!("Expected ThrallHashes for stored_l1_p5, found {:?}", stored_l1_p5.content),
+        }
+        assert_eq!(stored_l1_p5.prev_page_hash, Some(stored_l1_p3.page_hash), "L1P5 prev_page_hash should be L1P3's hash"); // Links to L1P3
         assert!(manager.active_pages.get(&1u8).is_none(), "No L1 page should be active");
         
         // Check last finalized for L0 and L1 after leaf 3
@@ -640,14 +868,26 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         time_hierarchy: TimeHierarchyConfig {
             levels: vec![
                 TimeLevel {
-                            rollup_config: RollupConfig::default(),
-                            retention_policy: None, name: "L0".to_string(), duration_seconds: 1 }, // REMOVED parent_level_name
+                    rollup_config: RollupConfig {
+                        max_leaves_per_page: 1,
+                        max_page_age_seconds: 1000,
+                        force_rollup_on_shutdown: false,
+                    },
+                    retention_policy: None, name: "L0".to_string(), duration_seconds: 1 },
                 TimeLevel {
-                            rollup_config: RollupConfig::default(),
-                            retention_policy: None, name: "L1".to_string(), duration_seconds: 1 }, // REMOVED parent_level_name
+                    rollup_config: RollupConfig {
+                        max_leaves_per_page: 1,
+                        max_page_age_seconds: 1000,
+                        force_rollup_on_shutdown: false,
+                    },
+                    retention_policy: None, name: "L1".to_string(), duration_seconds: 1 },
                 TimeLevel {
-                            rollup_config: RollupConfig::default(),
-                            retention_policy: None, name: "L2".to_string(), duration_seconds: 1 }, // REMOVED parent_level_name
+                    rollup_config: RollupConfig {
+                        max_leaves_per_page: 1,
+                        max_page_age_seconds: 1000,
+                        force_rollup_on_shutdown: false,
+                    },
+                    retention_policy: None, name: "L2".to_string(), duration_seconds: 1 },
             ],
         },
         rollup: RollupConfig {
@@ -695,23 +935,41 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         let stored_l0_page = storage.load_page(0, 0).await.expect("Storage query failed for L0P0 in cascade").expect("L0P0 not found after cascade");
         assert_eq!(stored_l0_page.page_id, 0);
         assert_eq!(stored_l0_page.level, 0);
-        assert_eq!(stored_l0_page.content_hashes.len(), 1);
-        assert_matches!(stored_l0_page.content_hashes[0], PageContentHash::LeafHash(hash) if hash == leaf1.leaf_hash);
+        assert_eq!(stored_l0_page.content_len(), 1);
+        match &stored_l0_page.content {
+            PageContent::Leaves(leaves) => {
+                assert_eq!(leaves.len(), 1, "L0 page should have 1 leaf");
+                assert_eq!(leaves[0].leaf_hash, leaf1.leaf_hash, "L0 leaf hash mismatch");
+            }
+            _ => panic!("L0 page content should be Leaves, found {:?}", stored_l0_page.content),
+        }
 
         // L1P1 (ID 1) assertions
         let stored_l1_page = storage.load_page(1, 1).await.expect("Storage query failed for L1P1 in cascade").expect("L1P1 not found after cascade");
         assert_eq!(stored_l1_page.page_id, 1);
         assert_eq!(stored_l1_page.level, 1);
-        assert_eq!(stored_l1_page.content_hashes.len(), 1);
-        assert_matches!(stored_l1_page.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l0_page.page_hash);
+        assert_eq!(stored_l1_page.content_len(), 1);
+        match &stored_l1_page.content {
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 1, "L1 page should have 1 thrall hash");
+                assert_eq!(hashes[0], stored_l0_page.page_hash, "L1 thrall hash mismatch");
+            }
+            _ => panic!("L1 page content should be ThrallHashes, found {:?}", stored_l1_page.content),
+        }
         assert_eq!(stored_l1_page.prev_page_hash, None, "L1P1 should not have a prev_page_hash (first in its level)");
 
         // L2P2 (ID 2) assertions (highest level in this config)
         let stored_l2_page = storage.load_page(2, 2).await.expect("Storage query failed for L2P2 in cascade").expect("L2P2 not found after cascade");
         assert_eq!(stored_l2_page.page_id, 2);
         assert_eq!(stored_l2_page.level, 2);
-        assert_eq!(stored_l2_page.content_hashes.len(), 1);
-        assert_matches!(stored_l2_page.content_hashes[0], PageContentHash::ThrallPageHash(hash) if hash == stored_l1_page.page_hash);
+        assert_eq!(stored_l2_page.content_len(), 1);
+        match &stored_l2_page.content {
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 1, "L2 page should have 1 thrall hash");
+                assert_eq!(hashes[0], stored_l1_page.page_hash, "L2 thrall hash mismatch");
+            }
+            _ => panic!("L2 page content should be ThrallHashes, found {:?}", stored_l2_page.content),
+        }
         assert_eq!(stored_l2_page.prev_page_hash, None, "L2P2 should not have a prev_page_hash (first in its level)");
         
         // Check active pages are empty for L0, L1, L2 as all should have finalized
@@ -735,7 +993,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
 
-        let config = Arc::new(create_test_config(false, 60)); // Retention disabled, 60s period (irrelevant)
+        let config = Arc::new(create_test_config(false, 60, None, None)); // Retention disabled, 60s period (irrelevant)
         let storage = Arc::new(MemoryStorage::new());
         let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
 
@@ -758,7 +1016,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         reset_global_ids();
 
         // Retention enabled, but period is 0 seconds
-        let config = Arc::new(create_test_config(true, 0)); 
+        let config = Arc::new(create_test_config(true, 0, None, None)); 
         let storage = Arc::new(MemoryStorage::new());
         let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
 
@@ -781,7 +1039,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         reset_global_ids();
 
         let retention_period_seconds = 60;
-        let config = Arc::new(create_test_config(true, retention_period_seconds)); 
+        let config = Arc::new(create_test_config(true, retention_period_seconds, None, None)); 
         let storage = Arc::new(MemoryStorage::new());
         let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
 
@@ -804,7 +1062,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         reset_global_ids();
 
         let retention_period_seconds = 60;
-        let config = Arc::new(create_test_config(true, retention_period_seconds));
+        let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
         let storage = Arc::new(MemoryStorage::new());
         let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
 
@@ -840,7 +1098,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         reset_global_ids();
 
         let retention_period_seconds = 60;
-        let config = Arc::new(create_test_config(true, retention_period_seconds));
+        let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
         let storage = Arc::new(MemoryStorage::new());
         let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
 
@@ -871,7 +1129,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
 
         let retention_period_seconds = 60;
         // Config has 2 levels by default from create_test_config: L0 (1s), L1 (60s)
-        let config = Arc::new(create_test_config(true, retention_period_seconds));
+        let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
         let storage = Arc::new(MemoryStorage::new());
         let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
 
@@ -910,6 +1168,144 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(storage.page_exists(0, l0_new_page.page_id).await.unwrap(), "L0 new page should be kept");
         assert!(!storage.page_exists(1, l1_old_page.page_id).await.unwrap(), "L1 old page should be deleted");
         assert!(storage.page_exists(1, l1_new_page.page_id).await.unwrap(), "L1 new page should be kept");
+    }
+
+    #[tokio::test]
+    async fn test_retention_l0_keep_n_pages() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+
+        let keep_n = 2;
+        // Global retention is enabled but L0 will use its specific KeepNPages policy.
+        // L1 will use global (DeleteAfterSecs(60)) or KeepIndefinitely if global is off.
+        let config = Arc::new(create_test_config(
+            true, // global retention enabled
+            60,   // global retention period_seconds (should not affect L0)
+            Some(RollupRetentionPolicy::KeepNPages(keep_n)), // L0 policy
+            None, // L1 policy (will use global or default)
+        ));
+        let storage = Arc::new(MemoryStorage::new());
+        let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
+
+        let now = Utc::now();
+        // Create 4 pages for L0 with varying end times
+        let page1_time = now - Duration::seconds(400);
+        let page2_time = now - Duration::seconds(300);
+        let page3_time = now - Duration::seconds(200);
+        let page4_time = now - Duration::seconds(100);
+
+        let page1 = create_retention_test_page(0, 0, page1_time, &config);
+        let page2 = create_retention_test_page(0, 1, page2_time, &config);
+        let page3 = create_retention_test_page(0, 2, page3_time, &config);
+        let page4 = create_retention_test_page(0, 3, page4_time, &config);
+
+        storage.store_page(&page1).await.unwrap();
+        storage.store_page(&page2).await.unwrap();
+        storage.store_page(&page3).await.unwrap();
+        storage.store_page(&page4).await.unwrap();
+
+        assert!(storage.page_exists(0, page1.page_id).await.unwrap(), "L0 Page 1 pre-retention");
+        assert!(storage.page_exists(0, page2.page_id).await.unwrap(), "L0 Page 2 pre-retention");
+        assert!(storage.page_exists(0, page3.page_id).await.unwrap(), "L0 Page 3 pre-retention");
+        assert!(storage.page_exists(0, page4.page_id).await.unwrap(), "L0 Page 4 pre-retention");
+
+        manager.apply_retention_policies().await.unwrap();
+
+        // Page1 and Page2 are the oldest, should be deleted.
+        // Page3 and Page4 are the newest, should be kept.
+        assert!(!storage.page_exists(0, page1.page_id).await.unwrap(), "L0 Page 1 (oldest) should be deleted by KeepNPages(2)");
+        assert!(!storage.page_exists(0, page2.page_id).await.unwrap(), "L0 Page 2 (second oldest) should be deleted by KeepNPages(2)");
+        assert!(storage.page_exists(0, page3.page_id).await.unwrap(), "L0 Page 3 (second newest) should be kept by KeepNPages(2)");
+        assert!(storage.page_exists(0, page4.page_id).await.unwrap(), "L0 Page 4 (newest) should be kept by KeepNPages(2)");
+    }
+
+    #[tokio::test]
+    async fn test_retention_l0_keep_n_pages_zero() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+
+        // L0 policy is KeepNPages(0), which should delete all L0 pages.
+        let config = Arc::new(create_test_config(
+            true, // global retention enabled
+            60,   // global retention period_seconds (should not affect L0)
+            Some(RollupRetentionPolicy::KeepNPages(0)), // L0 policy
+            None, // L1 policy
+        ));
+        let storage = Arc::new(MemoryStorage::new());
+        let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
+
+        let now = Utc::now();
+        let page1_time = now - Duration::seconds(200);
+        let page2_time = now - Duration::seconds(100);
+
+        let page1 = create_retention_test_page(0, 0, page1_time, &config);
+        let page2 = create_retention_test_page(0, 1, page2_time, &config);
+
+        storage.store_page(&page1).await.unwrap();
+        storage.store_page(&page2).await.unwrap();
+
+        assert!(storage.page_exists(0, page1.page_id).await.unwrap(), "L0 Page 1 pre-retention");
+        assert!(storage.page_exists(0, page2.page_id).await.unwrap(), "L0 Page 2 pre-retention");
+
+        manager.apply_retention_policies().await.unwrap();
+
+        assert!(!storage.page_exists(0, page1.page_id).await.unwrap(), "L0 Page 1 should be deleted by KeepNPages(0)");
+        assert!(!storage.page_exists(0, page2.page_id).await.unwrap(), "L0 Page 2 should be deleted by KeepNPages(0)");
+    }
+
+    #[tokio::test]
+    async fn test_retention_mixed_policies_l0_keep_n_l1_delete_after_secs() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+
+        let l0_keep_n = 1;
+        let l1_delete_after_secs = 30u64;
+
+        let config = Arc::new(create_test_config(
+            false, // global retention disabled, policies are per-level only
+            0,     // global retention period_seconds (irrelevant)
+            Some(RollupRetentionPolicy::KeepNPages(l0_keep_n)), // L0 policy
+            Some(RollupRetentionPolicy::DeleteAfterSecs(l1_delete_after_secs)), // L1 policy
+        ));
+        let storage = Arc::new(MemoryStorage::new());
+        let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
+
+        let now = Utc::now();
+
+        // L0 pages: KeepNPages(1)
+        let l0_page_old_time = now - Duration::seconds(200);
+        let l0_page_new_time = now - Duration::seconds(100);
+        let l0_page_old = create_retention_test_page(0, 0, l0_page_old_time, &config);
+        let l0_page_new = create_retention_test_page(0, 1, l0_page_new_time, &config);
+        storage.store_page(&l0_page_old).await.unwrap();
+        storage.store_page(&l0_page_new).await.unwrap();
+
+        // L1 pages: DeleteAfterSecs(30)
+        // L1 page duration is 60s from create_test_config.
+        // Page end_time = start_time + level_duration
+        // Page age = now - end_time
+        let l1_page_old_start_time = now - Duration::seconds(100); // end_time = now - 40s. Age = 40s. Should be deleted.
+        let l1_page_new_start_time = now - Duration::seconds(70);  // end_time = now - 10s. Age = 10s. Should be kept.
+        
+        let l1_page_old = create_retention_test_page(1, 2, l1_page_old_start_time, &config);
+        let l1_page_new = create_retention_test_page(1, 3, l1_page_new_start_time, &config);
+        storage.store_page(&l1_page_old).await.unwrap();
+        storage.store_page(&l1_page_new).await.unwrap();
+
+        assert!(storage.page_exists(0, l0_page_old.page_id).await.unwrap(), "L0 old pre-retention");
+        assert!(storage.page_exists(0, l0_page_new.page_id).await.unwrap(), "L0 new pre-retention");
+        assert!(storage.page_exists(1, l1_page_old.page_id).await.unwrap(), "L1 old pre-retention");
+        assert!(storage.page_exists(1, l1_page_new.page_id).await.unwrap(), "L1 new pre-retention");
+
+        manager.apply_retention_policies().await.unwrap();
+
+        // L0 assertions: KeepNPages(1)
+        assert!(!storage.page_exists(0, l0_page_old.page_id).await.unwrap(), "L0 old should be deleted by KeepNPages(1)");
+        assert!(storage.page_exists(0, l0_page_new.page_id).await.unwrap(), "L0 new should be kept by KeepNPages(1)");
+
+        // L1 assertions: DeleteAfterSecs(30)
+        assert!(!storage.page_exists(1, l1_page_old.page_id).await.unwrap(), "L1 old (age 40s) should be deleted by DeleteAfterSecs(30)");
+        assert!(storage.page_exists(1, l1_page_new.page_id).await.unwrap(), "L1 new (age 10s) should be kept by DeleteAfterSecs(30)");
     }
 
 }

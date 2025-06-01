@@ -108,6 +108,14 @@ struct JournalPage {
   * Time-range: fetch leaves/pages by timestamp.
   * Level-based: retrieve summaries (Merkle roots) without all raw deltas.
   * Container-centric: filter leaves by `ContainerID`.
+  * Leaf Inclusion Proofs: Verify that a specific `JournalLeaf` (identified by its `LeafHash`) is part of a `JournalPage`.
+    - Current Implementation (`QueryEngine::get_leaf_inclusion_proof`):
+      1. Identifies candidate level 0 `JournalPage`s, starting with the active page from `TimeHierarchyManager`.
+      2. Loads the `JournalPage` and extracts its `LeafHash` entries.
+      3. Dynamically constructs an in-memory `MerkleTree` from these hashes.
+      4. Generates a `MerkleProof` for the target leaf within this tree.
+      5. **Limitation**: The proof currently returns a **placeholder `JournalLeaf`** (correct `leaf_hash`, dummy data for other fields). Full `JournalLeaf` retrieval by hash is a TODO.
+      6. **Scope**: Primarily targets level 0 pages. Search will be extended to archived pages.
 
 ---
 

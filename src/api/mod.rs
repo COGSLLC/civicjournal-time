@@ -4,6 +4,7 @@
 pub mod sync_api;
 
 #[cfg(feature = "async_api")]
+/// Provides an asynchronous API for interacting with the CivicJournal.
 pub mod async_api;
 
 // Define public API traits

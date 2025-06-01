@@ -10,6 +10,13 @@
 - [x] Add comprehensive test coverage
 - [x] Fix test reliability issues
 - [x] Document architecture and test patterns
+- [x] Fix Async Append Leaf API: Resolved compilation errors and test failures related to the async Append Leaf API and associated configuration changes (TimeLevel struct updates, validation logic, global ID synchronization in tests). All tests now pass under `async_api` feature.
+- [x] Code Cleanup: Addressed compiler warnings (unused imports, missing documentation) after recent fixes.
+- [x] Implement Retention Policies: Enhanced `TimeHierarchyManager::apply_retention_policies` to support per-level retention (`KeepIndefinitely`, `DeleteAfterSecs`, `KeepNPages`) with fallback to global config. Added comprehensive tests for various policy scenarios.
+- [x] Implement asynchronous `backup_journal` for `FileStorage` (zip-based).
+- [x] Refactor common test configuration to `src/test_utils.rs`.
+- [x] Resolve various compilation issues and warnings related to async backup and test refactoring.
+- [x] Refactor `JournalPage` to store full `JournalLeaf` objects (L0) or thrall hashes (L1+) using `PageContent` enum, removing `PageContentHash` and updating all related logic.
 
 ## Next Steps
 
@@ -22,13 +29,36 @@
 
 2. **API Development**
    - [ ] Implement public API endpoints
-   - [ ] Add query interface
-   - [ ] Document API usage
+   - [~] Implement Query Interface (`src/query/`):
+     - [x] `get_leaf_inclusion_proof` (initial version):
+       - Searches active level 0 page.
+       - Partially implemented: Locates leaf hash in active L0 page, generates Merkle proof.
+       - `StorageBackend` trait updated with `async fn load_leaf_by_hash(&self, leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, CJError>`.
+       - `QueryEngine` now calls `storage.load_leaf_by_hash` to fetch the `JournalLeaf`, replacing the previous placeholder.
+       - Stub implementations for `load_leaf_by_hash` (returning `Ok(None)`) added to `FileStorage` and `MemoryStorage` to allow compilation.
+       - TODO: Implement the actual logic for `load_leaf_by_hash` in `FileStorage` and `MemoryStorage` (see Storage Backend Enhancements section below).
+       - TODO: Extend search to include archived level 0 pages (depends on `load_leaf_by_hash` and page iteration).
+     - [ ] `get_page_chain_integrity`
+     - [ ] `reconstruct_container_state`
+     - [ ] `get_delta_report`
+     - [ ] Document Query Engine API usage, including current capabilities and limitations of `get_leaf_inclusion_proof`.
 
 3. **Storage Improvements**
-   - [ ] Add compression support
-   - [ ] Implement retention policies
-   - [ ] Add backup/restore functionality
+   - [x] Add compression support
+   - [x] Implement retention policies
+   - [x] Add backup functionality (async, zip-based for FileStorage)
+   - [x] Add restore functionality (async, zip-based for FileStorage)
+
+### Storage Backend Enhancements
+
+- **Implement `load_leaf_by_hash` in `FileStorage` and `MemoryStorage`**:
+  - This is a required method of the `StorageBackend` trait.
+  - Current implementations are stubs returning `Ok(None)`.
+  - **Context**: `JournalPage` (L0) now stores full `JournalLeaf` objects within its `PageContent::Leaves(Vec<JournalLeaf>)` variant. Higher level pages store `PageContent::ThrallHashes(Vec<[u8; 32]>)`.
+  - **Implementation Strategy for `load_leaf_by_hash`**:
+    - The method will need to iterate through relevant L0 pages (initially active, then expanding to stored/archived pages) to find the page containing the leaf.
+    - Once the correct L0 page is loaded, the `JournalLeaf` can be retrieved directly from its `content`.
+    - An index (e.g., `DashMap<LeafHash, (Level, PageID)>`) could be introduced later for performance, but the initial implementation will rely on page scanning.
 
 ### Medium Term (Next 2 Months)
 
@@ -41,6 +71,19 @@
    - [ ] Add support for custom rollup functions
    - [ ] Implement time travel queries
    - [ ] Add support for custom time zones
+   - [ ] Archival Snapshotting & Cold Storage Integration:
+     - **Objective**: Enable the system to "snap off" older, finalized portions of the journal and move them to a designated cold storage tier.
+     - **Mechanism**:
+       - Define a process to select data for archival (e.g., based on age, level).
+       - Create a "snapshot" at the archival boundary. This snapshot would contain:
+         - Cryptographic hashes (e.g., Merkle root or list of page hashes) of the terminal data being archived.
+         - Information to link the remaining active journal data back to this snapshot (e.g., the snapshot's overall hash could become the `prev_hash` for the oldest active page at the highest relevant level).
+       - Facilitate the transfer of the actual archived page data to a separate storage system/location.
+     - **Verification**: The snapshot must be verifiable against the data in cold storage, ensuring integrity and allowing proof that the snapshot accurately represents the archived history.
+     - **Impact**:
+       - Reduces active storage size and cost.
+       - Maintains long-term auditability and verifiability of historical data.
+       - Requires mechanisms for querying data that might span active and cold storage (potentially via the snapshot).
 
 ## Original Planning Document
 
@@ -118,6 +161,10 @@ impl JournalLeaf {
 ### Task 1.2: Implement `JournalPage`
 
 **File**: `src/core/page.rs`
+
+**Status**: The original plan below has been superseded by a major refactoring (Completed May 2025). `JournalPage` now uses a `PageContent` enum to store either full `JournalLeaf` objects (for L0 pages) or thrall page hashes (for L1+ pages), and the `PageContentHash` enum has been removed. See `architecture.md` for the current structure.
+
+**Original Plan (Outdated):**
 
 **Objective**: Define the `JournalPage` structure, manage its leaf/thrall hashes, and calculate its hash.
 
@@ -411,6 +458,12 @@ This phase exposes core functionality.
     5.  Update the page's Merkle root (can be deferred until sealing for performance).
     6.  Persist the leaf (if leaves are stored individually) or update the page in storage.
     7.  Check if the page needs to be sealed and rolled up.
+*   **Status (As of 2025-05-31):**
+    *   Core `append_leaf` logic implemented in both sync and async APIs.
+    *   Extensive work on `TimeHierarchyManager` for page creation, sealing, and rollup logic, including use of per-level configurations.
+    *   Robust error handling for storage backend failures (e.g., during `store_page`) implemented. This includes failure injection capabilities in `MemoryStorage` for testing.
+    *   Comprehensive async tests (`test_journal_append_leaf_storage_error`) verify correct error propagation.
+    *   Related cascading rollup tests (`test_cascading_rollup_max_items`) fixed and passing.
 
 ### Task 4.2: Implement `Get Page` API
 
@@ -421,6 +474,73 @@ This phase exposes core functionality.
 **Details**:
 *   Input: `level: u8`, `page_id: u64`.
 *   Logic: Use the `StorageBackend` to load the page.
+*   **Status (As of 2025-05-31):**
+    *   **Async API (`src/api/async_api.rs`):**
+        *   Implemented `Journal::get_page(level: u8, page_id: u64)`.
+        *   Added `PageNotFound { level: u8, page_id: u64 }` error variant to `CJError`.
+        *   Added `TimeHierarchyManager::get_page_from_storage` async method for controlled storage access.
+        *   Includes test `test_journal_get_non_existent_page`.
+    *   **Sync API (`src/api/sync_api.rs`):**
+        *   Implemented `Journal::new(&'static Config)` and `Journal::get_page(level: u8, page_id: u64)`.
+        *   Uses a Tokio runtime (`rt.block_on(...)`) to call the async `TimeHierarchyManager::get_page_from_storage`.
+        *   Includes test `test_journal_get_non_existent_page_sync`.
+    *   Both implementations correctly handle `PageNotFound` errors.
+
+
+## X. Phase X: Backup and Restore
+
+### Task X.1: Implement Journal Backup
+
+*   **Objective**: Provide functionality to back up the entire journal to a specified location.
+*   **Status (As of 2025-06-01):** Completed. The `FileStorage::backup_journal` method (trait implementation) creates a zip archive of the journal directory at the specified `backup_path`.
+*   **Location**: `src/storage/file.rs`
+*   **Details**:
+    *   The backup is created as a zip file (e.g., `backup.zip`).
+    *   Uses `spawn_blocking` for I/O, writes to a temporary file, and then atomically renames it to the final backup path.
+    *   The inherent method `backup_journal_to_directory_raw` (previously `backup_journal`) still exists for raw directory copies if needed, but the primary mechanism is zip-based.
+    *   `test_backup_journal` was updated to verify:
+        *   Correct creation of the backup zip file.
+        *   Presence of expected level directories and page files within the unzipped archive.
+    *   Resolved `PermissionDenied` error on Windows by ensuring the zip file path was not mistakenly treated as a directory.
+    *   All tests pass.
+*   **Next Steps:**
+    1.  Consider adding a backup manifest file (see Task X.3).
+
+### Task X.2: Implement Journal Restore
+
+*   **Objective**: Provide functionality to restore a journal from a zip backup.
+*   **Status (As of 2025-06-01):** Completed.
+*   **Location**: `src/storage/file.rs` (trait `StorageBackend` and `FileStorage` implementation).
+*   **Details**:
+    *   The `restore_journal` method takes a `backup_path` (path to the zip file) and a `target_journal_dir` (absolute path to the directory where the journal contents should be restored, e.g., `FileStorage_base_path/journal/`).
+    *   The method first clears the `target_journal_dir` by removing it and recreating it. This ensures a clean restore and acts as the overwrite strategy.
+    *   It then extracts the contents of the backup zip file into the `target_journal_dir`.
+    *   Uses `spawn_blocking` for file I/O operations during extraction.
+    *   `test_restore_journal` was implemented to verify:
+        *   Setup of source storage, creation of pages, and backup to a zip file.
+        *   Setup of target storage, including placing a dummy file to ensure it's removed by restore.
+        *   Successful restoration from the zip backup.
+        *   Verification that the dummy file is gone.
+        *   Verification that all original pages exist in the target storage (using `page_exists` and direct file system checks).
+        *   Loading of a restored page and comparison of its metadata with the original.
+    *   All tests pass.
+*   **Next Steps:**
+    1.  Consider more robust error handling for corrupted zip files during restore.
+    2.  Integrate with backup manifest (Task X.3) for enhanced verification during restore, if implemented.
+
+### Task X.3: Implement Backup Manifest File
+
+*   **Objective**: Create a manifest file within each backup to store metadata and aid in verification/restore.
+*   **Status (As of 2025-05-31):** Not started.
+*   **Details**:
+    *   **Backup Manifest File (Task X.3) - COMPLETED**
+        *   **Implemented:**
+            *   Defined a JSON manifest (`backup_manifest.json`) structure (`BackupManifest`, `ManifestFileEntry`, etc.) with manifest versioning, backup timestamp, source storage details (type, path, compression), backup tool version, and a list of all backed-up journal page files.
+            *   Each file entry in the manifest includes its relative path (using `/` separators), SHA256 hash of its *uncompressed* page data (post-header), original uncompressed size, and its stored (potentially compressed) size within the backup.
+            *   The main `FileStorage::backup_journal` function (which creates a Zip archive) now generates this manifest. It dynamically determines page-specific compression, decompresses page data for hashing and original size calculation, and includes `backup_manifest.json` at the root of the zip.
+            *   `FileStorage::restore_journal` now attempts to read `backup_manifest.json` from the backup archive, parse it, and log key details. It proceeds with restore even if the manifest is absent or unparsable (logging a warning).
+            *   All associated tests are passing.
+        *   **Note:** Full verification of backup integrity using the manifest during restore (e.g., hash checking) is a potential future enhancement beyond basic parsing and logging.
 
 ## 5. Phase 5: Enhancements & Remaining Features
 

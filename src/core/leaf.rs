@@ -80,6 +80,22 @@ impl JournalLeaf {
     // TODO: Implement validation methods if needed
 }
 
+/// Represents the actual data payload for a leaf, versioned.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum LeafData {
+    V1(LeafDataV1),
+}
+
+/// Version 1 of the leaf data payload.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LeafDataV1 {
+    pub timestamp: DateTime<Utc>,      // Timestamp of the data content itself
+    pub content_type: String,        // e.g., "text/plain", "application/json-patch+json"
+    pub content: Vec<u8>,            // The actual data
+    pub author: String,              // Identifier for the author/source of this specific data
+    pub signature: String,           // Cryptographic signature of the content by the author
+}
+
 #[cfg(test)]
 mod tests {
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import for test synchronization

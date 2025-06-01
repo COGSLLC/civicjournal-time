@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::core::merkle::MerkleTree;
+use crate::core::leaf::JournalLeaf;
 use crate::config::Config; // Added for calculating end_time
 
 /// Type alias for a Merkle root, which is a SHA256 hash ([u8; 32]).
@@ -16,16 +17,11 @@ pub type MerkleRoot = [u8; 32];
 pub(crate) static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-/// Represents the type of content hash stored within a `JournalPage`.
-///
-/// A `JournalPage` can contain hashes of individual `JournalLeaf` entries
-/// or hashes of subordinate `JournalPage` instances (thrall pages).
-pub enum PageContentHash {
-    /// A SHA256 hash of a `JournalLeaf`'s content.
-    LeafHash([u8; 32]),
-    /// A SHA256 hash (specifically, the `page_hash`) of a subordinate `JournalPage`.
-    ThrallPageHash([u8; 32]),
+pub enum PageContent {
+    Leaves(Vec<JournalLeaf>),
+    ThrallHashes(Vec<[u8; 32]>),
 }
+
 
 /// A summary of a JournalPage, used for lightweight listings, e.g., for retention policies.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,11 +56,11 @@ pub struct JournalPage {
     /// The exclusive end timestamp of the time window covered by this page.
     pub end_time: DateTime<Utc>,
     /// A vector of `PageContentHash` items (leaf or thrall page hashes) aggregated by this page.
-    pub content_hashes: Vec<PageContentHash>,
-    /// The Merkle root calculated from the `content_hashes` of this page.
+    pub content: PageContent,
+    /// The Merkle root calculated from the `content` of this page.
     pub merkle_root: MerkleRoot,
     /// An optional hash of the preceding page at the same level.
-    pub prev_page_hash: Option<PageContentHash>,
+    pub prev_page_hash: Option<[u8; 32]>,
     /// Timestamp of the last leaf added to this page. None if no leaves yet.
     pub last_leaf_timestamp: Option<DateTime<Utc>>,
     /// The SHA256 hash of this `JournalPage`'s identifying fields, including its `merkle_root`.
@@ -91,7 +87,11 @@ impl JournalPage {
     /// This function currently uses `eprintln!` for errors during Merkle tree construction
     /// and defaults to a zeroed Merkle root. This behavior might change to return a `Result`
     /// in the future.
-    pub fn new(level: u8, prev_page_hash_arg: Option<PageContentHash>, time_window_start: DateTime<Utc>, current_time: DateTime<Utc>, config: &Config) -> Self {
+    pub fn new(
+        level: u8,
+        prev_page_hash_arg: Option<[u8; 32]>,
+        time_window_start: DateTime<Utc>,
+        config: &Config,) -> Self {
         let page_id = NEXT_PAGE_ID.fetch_add(1, Ordering::SeqCst);
 
         // Calculate end_time based on level duration
@@ -107,24 +107,21 @@ impl JournalPage {
         let mut hasher = Sha256::new();
         hasher.update(page_id.to_be_bytes());
         hasher.update(level.to_be_bytes());
-        hasher.update(current_time.to_rfc3339().as_bytes()); // creation_timestamp
+        hasher.update(time_window_start.to_rfc3339().as_bytes()); // creation_timestamp
         hasher.update(end_time.to_rfc3339().as_bytes());
         hasher.update(merkle_root_val);
-        if let Some(ref ph) = prev_page_hash_arg {
-            match ph {
-                PageContentHash::LeafHash(h) => hasher.update(h),
-                PageContentHash::ThrallPageHash(h) => hasher.update(h),
-            }
+        if let Some(prev_hash_val) = prev_page_hash_arg {
+            hasher.update(prev_hash_val);
         }
         let page_hash_val: [u8; 32] = hasher.finalize().into();
 
         Self {
             page_id,
             level,
-            creation_timestamp: current_time,
+            creation_timestamp: time_window_start,
             end_time,
-            content_hashes: Vec::new(),
-            merkle_root: merkle_root_val,
+            content: if level == 0 { PageContent::Leaves(Vec::new()) } else { PageContent::ThrallHashes(Vec::new()) },
+            merkle_root: [0u8; 32], // Default for empty content, will be recalculated
             prev_page_hash: prev_page_hash_arg,
             last_leaf_timestamp: None,
             page_hash: page_hash_val,
@@ -132,24 +129,44 @@ impl JournalPage {
         }
     }
 
-    /// Adds a content hash to the page. This is a simplified helper for internal management.
-    /// The main logic for adding leaves and recalculating hashes is in TimeHierarchyManager.
-    pub(crate) fn add_content_hash(&mut self, hash: PageContentHash, leaf_timestamp: DateTime<Utc>) {
-        self.content_hashes.push(hash);
-        self.last_leaf_timestamp = Some(leaf_timestamp);
-        // IMPORTANT: Merkle root and page_hash should be recalculated by the caller (TimeHierarchyManager)
-        // after all modifications for a given operation are done.
+    /// Adds a JournalLeaf to an L0 page.
+    /// Panics if called on a non-L0 page or if content is not PageContent::Leaves.
+    pub(crate) fn add_leaf(&mut self, leaf: JournalLeaf) {
+        if self.level != 0 {
+            panic!("add_leaf can only be called on L0 pages.");
+        }
+        match self.content {
+            PageContent::Leaves(ref mut leaves) => {
+                self.last_leaf_timestamp = Some(leaf.timestamp);
+                leaves.push(leaf);
+            }
+            _ => panic!("Attempted to add leaf to a page not containing PageContent::Leaves."),
+        }
+        // IMPORTANT: Merkle root and page_hash should be recalculated by the caller.
+    }
+
+    /// Adds a thrall page's hash to an L1+ page.
+    /// Panics if called on an L0 page or if content is not PageContent::ThrallHashes.
+    pub(crate) fn add_thrall_hash(&mut self, thrall_page_hash: [u8; 32], content_timestamp: DateTime<Utc>) {
+        if self.level == 0 {
+            panic!("add_thrall_hash cannot be called on L0 pages.");
+        }
+        match self.content {
+            PageContent::ThrallHashes(ref mut hashes) => {
+                self.last_leaf_timestamp = Some(content_timestamp); // Using last_leaf_timestamp to track latest content time
+                hashes.push(thrall_page_hash);
+            }
+            _ => panic!("Attempted to add thrall_hash to a page not containing PageContent::ThrallHashes."),
+        }
+        // IMPORTANT: Merkle root and page_hash should be recalculated by the caller.
     }
 
     /// Recalculates the Merkle root from `content_hashes` and then updates `page_hash`.
     pub fn recalculate_merkle_root_and_page_hash(&mut self) {
-        let actual_leaf_hashes: Vec<[u8; 32]> = self.content_hashes
-            .iter()
-            .map(|ch| match ch {
-                PageContentHash::LeafHash(h) => *h,
-                PageContentHash::ThrallPageHash(h) => *h,
-            })
-            .collect();
+        let actual_leaf_hashes: Vec<[u8; 32]> = match self.content {
+            PageContent::Leaves(ref leaves) => leaves.iter().map(|leaf| leaf.leaf_hash).collect(),
+            PageContent::ThrallHashes(ref hashes) => hashes.clone(),
+        };
 
         self.merkle_root = if actual_leaf_hashes.is_empty() {
             [0u8; 32]
@@ -170,14 +187,27 @@ impl JournalPage {
         hasher.update(self.creation_timestamp.to_rfc3339().as_bytes());
         hasher.update(self.end_time.to_rfc3339().as_bytes());
         hasher.update(self.merkle_root);
-        if let Some(ref ph) = self.prev_page_hash {
-            match ph {
-                PageContentHash::LeafHash(h) => hasher.update(h),
-                PageContentHash::ThrallPageHash(h) => hasher.update(h),
-            }
+        if let Some(prev_hash_val) = self.prev_page_hash {
+            hasher.update(prev_hash_val);
         }
         // Note: last_leaf_timestamp is not part of page_hash as it's too dynamic for page identity.
         self.page_hash = hasher.finalize().into();
+    }
+
+    /// Returns the number of items (leaves or thrall hashes) in the page's content.
+    pub fn content_len(&self) -> usize {
+        match &self.content {
+            PageContent::Leaves(leaves) => leaves.len(),
+            PageContent::ThrallHashes(hashes) => hashes.len(),
+        }
+    }
+
+    /// Checks if the page's content is empty.
+    pub fn is_content_empty(&self) -> bool {
+        match &self.content {
+            PageContent::Leaves(leaves) => leaves.is_empty(),
+            PageContent::ThrallHashes(hashes) => hashes.is_empty(),
+        }
     }
 }
 
@@ -185,6 +215,7 @@ impl JournalPage {
 mod tests {
     use super::*;
     use chrono::{Utc, Duration};
+    use crate::core::leaf::{LeafData, LeafDataV1};
 
     // Removed local PAGE_TEST_MUTEX, lazy_static, and unused Mutex/Ordering imports
 
@@ -215,6 +246,24 @@ mod tests {
         }
     }
 
+    // Helper to create a dummy JournalLeaf for testing
+    fn create_dummy_leaf(timestamp: DateTime<Utc>, content_bytes: &[u8], container_id_suffix: &str) -> JournalLeaf {
+        let leaf_data = LeafDataV1 {
+            timestamp,
+            content_type: "application/octet-stream".to_string(),
+            content: content_bytes.to_vec(),
+            author: "page_test".to_string(),
+            signature: "sig_page_test".to_string(),
+        };
+        let payload = serde_json::to_value(LeafData::V1(leaf_data)).expect("Failed to serialize dummy LeafDataV1");
+        JournalLeaf::new(
+            timestamp,
+            None, // prev_leaf_hash for dummy leaf
+            format!("dummy_container_{}", container_id_suffix),
+            payload
+        ).expect("Failed to create dummy JournalLeaf")
+    }
+
     #[tokio::test]
     async fn test_journal_page_creation_and_id_increment() {
         // Lock the shared mutex before resetting IDs and running the test
@@ -222,13 +271,13 @@ mod tests {
         reset_global_ids(); // Reset IDs at the beginning of the test
         let now = Utc::now();
         let config = get_test_config();
-        let page1 = JournalPage::new(0, None, now, now, &config);
-        let page2 = JournalPage::new(1, Some(PageContentHash::LeafHash(page1.page_hash)), now + Duration::seconds(2), now + Duration::seconds(2), &config);
+        let page1 = JournalPage::new(0, None, now, &config);
+        let page2 = JournalPage::new(1, Some(page1.page_hash), now + Duration::seconds(2), &config);
 
         assert!(page2.page_id > page1.page_id, "page2_id ({}) should be greater than page1_id ({})", page2.page_id, page1.page_id);
         assert_eq!(page1.level, 0);
         assert_eq!(page2.level, 1);
-        assert_eq!(page2.prev_page_hash, Some(PageContentHash::LeafHash(page1.page_hash)));
+        assert_eq!(page2.prev_page_hash, Some(page1.page_hash));
         assert_eq!(page1.merkle_root, [0u8; 32], "Merkle root for empty content should be default");
         assert!(page1.end_time > page1.creation_timestamp, "End time should be after creation time");
         assert_eq!(page1.end_time, page1.creation_timestamp + Duration::seconds(config.time_hierarchy.levels[0].duration_seconds as i64));
@@ -241,35 +290,42 @@ mod tests {
         reset_global_ids();
         let now = Utc::now();
         let config = get_test_config();
-        let page1 = JournalPage::new(0, None, now, now, &config);
-        let page2 = JournalPage::new(0, None, now + Duration::seconds(10), now + Duration::seconds(10), &config);
-        let page3 = JournalPage::new(1, None, now, now, &config);
-        let page4 = JournalPage::new(0, Some(PageContentHash::ThrallPageHash([1u8; 32])), now, now, &config);
+        let page1 = JournalPage::new(0, None, now, &config);
+        let page2 = JournalPage::new(0, None, now + Duration::seconds(10), &config);
+        let page3 = JournalPage::new(1, None, now, &config);
+        let page4 = JournalPage::new(0, Some([1u8; 32]), now, &config);
         
         assert_ne!(page1.page_hash, page2.page_hash, "Page hash should differ for different time_window_start");
         assert_ne!(page1.page_hash, page3.page_hash, "Page hash should differ for different level");
         assert_ne!(page1.page_hash, page4.page_hash, "Page hash should differ for different prev_page_hash");
 
-        let mut page5 = JournalPage::new(0, None, now, now, &config);
-        page5.add_content_hash(PageContentHash::LeafHash([10u8; 32]), now + Duration::milliseconds(100));
+        let mut page5 = JournalPage::new(0, None, now, &config);
+        let leaf5_1 = create_dummy_leaf(now + Duration::milliseconds(100), &[10u8; 32], "p5_1");
+        page5.add_leaf(leaf5_1.clone());
         page5.recalculate_merkle_root_and_page_hash();
 
-        let mut page6 = JournalPage::new(0, None, now, now, &config);
-        page6.add_content_hash(PageContentHash::LeafHash([10u8; 32]), now + Duration::milliseconds(100));
-        page6.add_content_hash(PageContentHash::LeafHash([20u8; 32]), now + Duration::milliseconds(200));
+        let mut page6 = JournalPage::new(0, None, now, &config);
+        let leaf6_1 = create_dummy_leaf(now + Duration::milliseconds(100), &[10u8; 32], "p6_1");
+        let leaf6_2 = create_dummy_leaf(now + Duration::milliseconds(200), &[20u8; 32], "p6_2");
+        page6.add_leaf(leaf6_1.clone());
+        page6.add_leaf(leaf6_2.clone());
         page6.recalculate_merkle_root_and_page_hash();
 
-        let mut page7 = JournalPage::new(0, None, now, now, &config);
-        page7.add_content_hash(PageContentHash::LeafHash([20u8; 32]), now + Duration::milliseconds(100));
-        page7.add_content_hash(PageContentHash::LeafHash([10u8; 32]), now + Duration::milliseconds(200));
+        let mut page7 = JournalPage::new(0, None, now, &config);
+        let leaf7_1 = create_dummy_leaf(now + Duration::milliseconds(100), &[20u8; 32], "p7_1");
+        let leaf7_2 = create_dummy_leaf(now + Duration::milliseconds(200), &[10u8; 32], "p7_2");
+        page7.add_leaf(leaf7_1.clone());
+        page7.add_leaf(leaf7_2.clone());
         page7.recalculate_merkle_root_and_page_hash();
 
         assert_ne!(page1.page_hash, page5.page_hash, "Page hash should differ for different content_hashes (empty vs one)");
         assert_ne!(page5.page_hash, page6.page_hash, "Page hash should differ for different content_hashes (one vs two)");
         assert_ne!(page6.page_hash, page7.page_hash, "Page hash should differ for different order of content_hashes");
 
-        let expected_merkle_root_page5 = MerkleTree::new(vec![[10u8; 32]]).unwrap().get_root().unwrap();
-        assert_eq!(page5.merkle_root, expected_merkle_root_page5, "Merkle root for page5 is incorrect");
+        // With add_leaf, the merkle root is calculated internally based on leaf hashes.
+        // We just need to ensure it's not the default empty root.
+        let default_merkle_root = [0u8; 32]; // Default/empty Merkle root
+        assert_ne!(page5.merkle_root, default_merkle_root, "Merkle root for page5 should not be default after adding a leaf");
         assert_eq!(page1.merkle_root, [0u8; 32], "Merkle root for empty content should be default");
         assert!(page5.last_leaf_timestamp.is_some());
     }

@@ -41,6 +41,18 @@ pub enum CJError {
     /// Storage operation failed
     #[error("Storage error: {0}")]
     StorageError(String),
+
+    /// Compression operation failed
+    #[error("Compression error: {0}")]
+    CompressionError(String),
+
+    /// Decompression operation failed
+    #[error("Decompression error: {0}")]
+    DecompressionError(String),
+
+    /// Invalid file format encountered (e.g., during header parsing)
+    #[error("Invalid file format: {0}")]
+    InvalidFileFormat(String),
     
     /// Time hierarchy operation failed
     #[error("Time hierarchy error: {0}")]
@@ -53,6 +65,15 @@ pub enum CJError {
     /// Requested resource not found
     #[error("Not found: {0}")]
     NotFound(String),
+
+    /// Requested page not found in storage
+    #[error("Page L{level}P{page_id} not found")]
+    PageNotFound {
+        /// The level of the page that was not found.
+        level: u8,
+        /// The ID of the page that was not found.
+        page_id: u64
+    },
     
     /// Operation not supported
     #[error("Operation not supported: {0}")]
