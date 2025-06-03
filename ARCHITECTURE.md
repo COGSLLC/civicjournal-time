@@ -31,6 +31,26 @@ CivicJournal Time is a hierarchical Merkle-chained delta-log system designed for
    - Merkle tree for data integrity
    - Hierarchical page structure for efficient queries
 
+   5. **Query Engine (`src/query/`)**
+      - **Objective**: Provides interfaces to retrieve data, verify integrity, and reconstruct state from the journal.
+      - **Core Principles**:
+        - Leverages the `StorageBackend` trait for all data access.
+        - Primarily operates by iterating through Level 0 (L0) `JournalPage`s, which store full `JournalLeaf` objects in their `PageContent::Leaves` variant. This allows direct access to leaf data once the correct L0 page is identified and loaded.
+        - Efficiently locating and loading relevant L0 pages (both active and historical/archived) is a key challenge addressed by storage backend implementations.
+      - **Key Planned Functionalities**:
+        - **`get_leaf_inclusion_proof(leaf_hash)`**:
+          - Retrieves a specific `JournalLeaf` by its hash and provides a Merkle proof of its inclusion in its L0 page.
+          - Relies on `StorageBackend::load_leaf_by_hash` to find the leaf (which scans L0 pages).
+          - Dynamically reconstructs the Merkle tree for the identified L0 page to generate the proof.
+        - **`reconstruct_container_state(container_id, at_timestamp)`**:
+          - Rebuilds the state of a given `container_id` at a specific point in time.
+          - Achieved by iterating through L0 pages, collecting relevant `JournalLeaf` entries for the container up to `at_timestamp`, and sequentially applying their `delta_payload`s.
+        - **`get_delta_report(container_id, from_timestamp, to_timestamp)`**:
+          - Fetches all `JournalLeaf` entries for a `container_id` within a specified time range.
+          - Involves iterating L0 pages whose time windows overlap the query range and filtering leaves by `container_id` and timestamp.
+        - **`get_page_chain_integrity(level, from_page_id, to_page_id)`**:
+          - Verifies the cryptographic linkage (`prev_page_hash` to `page_hash`) of a sequence of pages within a given `level`.
+
 ### Module Structure
 
 ```

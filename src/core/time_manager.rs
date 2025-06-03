@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use crate::config::Config;
 use crate::storage::StorageBackend;
 use crate::core::leaf::JournalLeaf;
-use crate::core::page::JournalPage;
+use crate::core::page::{JournalPage, PageContent};
 use crate::error::CJError;
 use crate::types::time::RollupRetentionPolicy;
 
@@ -94,7 +94,12 @@ impl TimeHierarchyManager {
         let level_idx = 0; // Base level for leaves
         let (window_start, _window_end) = self.get_page_window(level_idx, leaf.timestamp)?;
 
-        if let Some(active_page_entry_ref) = self.active_pages.get_mut(&(level_idx as u8)) {
+        println!("[GOCAPL_DBG] PRE_GET_MUT for level {}. active_pages.contains_key(&{}): {}", level_idx, level_idx, self.active_pages.contains_key(&(level_idx as u8)));
+        let active_page_entry_ref_option = self.active_pages.get_mut(&(level_idx as u8));
+        println!("[GOCAPL_DBG] POST_GET_MUT_ATTEMPT for level {}. Option is Some: {}", level_idx, active_page_entry_ref_option.is_some());
+
+        if let Some(active_page_entry_ref) = active_page_entry_ref_option {
+            println!("[GOCAPL_DBG] INSIDE_IF_LET_POST_GET_MUT for level {}. Got ref.", level_idx);
         let active_page_entry = active_page_entry_ref.value(); // Get a reference to JournalPage
         println!("[GOCAPL] Found active page L{}P{} (created: {}, ends: {}, leaves: {}). Leaf ts: {}.", 
                  active_page_entry.level, active_page_entry.page_id, 
@@ -511,16 +516,19 @@ impl TimeHierarchyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::page::PageContent;
-    use crate::types::time::{RollupConfig, TimeHierarchyConfig, TimeLevel};
+    use crate::core::page::{JournalPage, PageContent};
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
     use crate::storage::memory::MemoryStorage; // For creating an instance
     use std::sync::atomic::Ordering; // If used directly, otherwise covered by reset_global_ids
     use chrono::Duration;
+    use chrono::TimeZone; // Cascade: Added for with_ymd_and_hms
     use serde_json::json; // ADDED for json! macro
-    use crate::config::RetentionConfig; // ADDED for RetentionConfig struct
-
-    // Helper to create a JournalPage for retention tests with a specific creation/end time logic
+    use crate::config::{Config, RetentionConfig, StorageConfig as TestStorageConfig, CompressionConfig, LoggingConfig, MetricsConfig};
+    use crate::StorageType as TestStorageType; // Re-exported at crate root
+    use crate::CompressionAlgorithm; // Re-exported at crate root
+    use crate::RollupConfig;
+    use crate::TimeLevel;
+    use crate::TimeHierarchyConfig;
     // Note: This directly creates a JournalPage. For manager tests, you'd typically add leaves.
     // However, for retention, we need to control page end_times precisely.
     fn create_retention_test_page(level: u8, page_id_offset: u64, time_window_start: DateTime<Utc>, config: &Config) -> JournalPage {
@@ -1306,6 +1314,287 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         // L1 assertions: DeleteAfterSecs(30)
         assert!(!storage.page_exists(1, l1_page_old.page_id).await.unwrap(), "L1 old (age 40s) should be deleted by DeleteAfterSecs(30)");
         assert!(storage.page_exists(1, l1_page_new.page_id).await.unwrap(), "L1 new (age 10s) should be kept by DeleteAfterSecs(30)");
+    } // End of test_retention_mixed_policies_l0_keep_n_l1_delete_after_secs
+
+    // Helper function to create a configuration suitable for testing age-based rollups
+    fn create_age_based_rollup_config_and_manager(
+
+        l0_max_age_secs: u64,
+        l0_max_leaves: u32,
+        l1_max_age_secs: u64,
+        l1_max_leaves: u32,
+    ) -> (TimeHierarchyManager, Arc<MemoryStorage>) {
+        let config_val = Config {
+            time_hierarchy: TimeHierarchyConfig {
+                levels: vec![
+                    TimeLevel { // Level 0
+                        name: "L0_age_test".to_string(),
+                        duration_seconds: 60, // Standard 1 minute L0 pages
+                        rollup_config: RollupConfig {
+                            max_leaves_per_page: l0_max_leaves as usize,
+                            max_page_age_seconds: l0_max_age_secs,
+                            force_rollup_on_shutdown: false,
+                        },
+                        retention_policy: None,
+                    },
+                    TimeLevel { // Level 1
+                        name: "L1_age_test".to_string(),
+                        duration_seconds: 3600, // Standard 1 hour L1 pages
+                        rollup_config: RollupConfig {
+                            max_leaves_per_page: l1_max_leaves as usize,
+                            max_page_age_seconds: l1_max_age_secs,
+                            force_rollup_on_shutdown: false,
+                        },
+                        retention_policy: None,
+                    },
+                ],
+            },
+            rollup: RollupConfig { // Global rollup, less critical if per-level is specific
+                max_leaves_per_page: 1000, // High default
+                max_page_age_seconds: 3600 * 24, // High default
+                force_rollup_on_shutdown: false,
+            },
+            storage: TestStorageConfig {
+                storage_type: TestStorageType::Memory,
+                base_path: "".to_string(),
+                max_open_files: 100, // Default from StorageConfig
+            },
+            retention: RetentionConfig {
+                enabled: false, // Keep retention disabled for these rollup tests
+                period_seconds: 0,
+                cleanup_interval_seconds: 300,
+            },
+            compression: CompressionConfig { enabled: false, algorithm: CompressionAlgorithm::None, level: 0 },
+            logging: LoggingConfig::default(),
+            metrics: MetricsConfig::default(),
+        };
+        let config = Arc::new(config_val);
+        let storage = Arc::new(MemoryStorage::new());
+        let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
+        (manager, storage)
+    }
+
+    #[tokio::test]
+    async fn test_age_based_rollup_cascade() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+
+        let l0_max_age = 2; // L0 pages finalize after 2 seconds
+        let l1_max_age = 4; // L1 pages finalize after 4 seconds (relative to their creation)
+        // Set max_leaves high so finalization is age-based
+        let (manager, storage) = create_age_based_rollup_config_and_manager(l0_max_age, 100, l1_max_age, 100);
+
+        let initial_time = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(); // Cascade: Use fixed time for deterministic test
+
+        // 1. Add leaf1 to L0
+        let leaf1_ts = initial_time;
+        let leaf1 = JournalLeaf::new(leaf1_ts, None, "age_test_container".to_string(), json!({"id": 1})).unwrap();
+        manager.add_leaf(&leaf1).await.unwrap();
+
+        // L0P0 (ID 0) should be active, not yet finalized
+        assert!(manager.active_pages.get(&0u8).is_some(), "L0P0 should be active initially");
+        assert_eq!(manager.active_pages.get(&0u8).unwrap().value().page_id, 0, "Active L0 page should be ID 0");
+        assert!(storage.load_page(0, 0).await.unwrap().is_none(), "L0P0 should not be in storage yet");
+
+        // 2. Wait for L0P0 to age past its max_page_age_seconds
+        tokio::time::sleep(std::time::Duration::from_secs(l0_max_age + 1)).await;
+
+        // 3. Add leaf2. This should trigger finalization of L0P0 due to age.
+        // L0P0's rollup will create/update L1P1 (ID 1).
+        let leaf2_ts = initial_time + Duration::seconds((l0_max_age + 1).try_into().unwrap()); // Cascade: Ensure leaf2 is timed to finalize L0P0
+        let leaf2 = JournalLeaf::new(leaf2_ts, None, "age_test_container".to_string(), json!({"id": 2})).unwrap();
+        manager.add_leaf(&leaf2).await.unwrap();
+
+        // L0P0 (ID 0) should now be finalized and stored
+        let stored_l0p0 = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should be stored after aging");
+        assert_eq!(stored_l0p0.page_id, 0);
+        // Check content of L0P0 - it should contain both leaf1 and leaf2, as leaf2 was added, then L0P0 finalized by age.
+        match stored_l0p0.content {
+            PageContent::Leaves(leaves) => {
+                assert_eq!(leaves.len(), 2, "L0P0 should contain leaf1 and leaf2");
+                assert_eq!(leaves[0].leaf_hash, leaf1.leaf_hash, "L0P0 leaf1 content mismatch");
+                assert_eq!(leaves[1].leaf_hash, leaf2.leaf_hash, "L0P0 leaf2 content mismatch");
+            }
+            _ => panic!("L0P0 content should be Leaves"),
+        }
+        
+        // After L0P0 finalizes (containing leaf1 and leaf2), no L0 page should be active until a new leaf is added.
+        assert!(manager.active_pages.get(&0u8).is_none(), "No L0 page should be active after L0P0 finalized");
+        // The next leaf added would create L0P1 (as L0P0 was ID 0, and L1P1 from rollup would be ID 1)
+        
+        // L1P1 (ID 1) should have been created by L0P0's rollup and should be active
+        let l1p1_active_page_entry = manager.active_pages.get(&1u8).expect("L1P1 (ID 1) should be active after L0P0 rollup");
+        assert_eq!(l1p1_active_page_entry.value().page_id, 1, "Active L1 page should be L1P1 (ID 1)");
+        let l1p1_creation_time = l1p1_active_page_entry.value().creation_timestamp;
+        assert!(storage.load_page(1, 1).await.unwrap().is_none(), "L1P1 should not be in storage yet");
+
+        // Add leaf3. This will create L0P2 (ID 2, as L0P0 was 0, L1P1 is 1).
+        // Timestamp it to be young within the next minute from initial_time to ensure L0P2 doesn't auto-finalize.
+        let leaf3_ts = initial_time + Duration::minutes(1) + Duration::seconds(1);
+        let leaf3 = JournalLeaf::new(leaf3_ts, None, "age_test_container".to_string(), json!({"id": 3})).unwrap();
+        manager.add_leaf(&leaf3).await.unwrap();
+
+        // L0P2 should now be active
+        let l0p2_active_page_entry = manager.active_pages.get(&0u8).expect("L0P2 (for leaf3) should be active");
+        assert_eq!(l0p2_active_page_entry.value().page_id, 2, "Active L0 page should be L0P2 (ID 2)");
+        let l0p2_creation_time = l0p2_active_page_entry.value().creation_timestamp;
+
+        // 4. Wait for L1P1 to age past its max_page_age_seconds
+        // Calculate how long L1P1 has been "alive" in test-logical time up to leaf3_ts (current logical time point)
+        let l1p1_age_at_leaf3_ts_s = leaf3_ts.signed_duration_since(l1p1_creation_time).num_seconds();
+        let target_l1p1_total_age_s = l1_max_age as i64 + 1; // Target age for L1P1 to ensure it's old enough
+        let mut additional_wait_for_l1_s: i64 = 0;
+
+        if l1p1_age_at_leaf3_ts_s < target_l1p1_total_age_s {
+            additional_wait_for_l1_s = target_l1p1_total_age_s - l1p1_age_at_leaf3_ts_s;
+        }
+        // If l1p1_age_at_leaf3_ts_s is already >= target_l1p1_total_age_s, additional_wait_for_l1_s remains 0.
+        
+        if additional_wait_for_l1_s > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(additional_wait_for_l1_s as u64)).await;
+        }
+        
+        // 5. Now, L0P2 (containing leaf3) is active. We need it to finalize by age to trigger a rollup to L1P1.
+        // L1P1 has already been made to wait past its age limit (step 4).
+        // So, the rollup from L0P2 should trigger L1P1's finalization.
+
+        // First, wait for L0P2 to age sufficiently.
+        // l0p2_creation_time was captured when L0P2 was created (with leaf3).
+        let mut time_to_wait_for_l0p2 = l0_max_age + 1;
+        // Calculate elapsed time since l0p2_creation_time (which is initial_time + 1 minute)
+        // Utc::now() is tricky here due to test execution speed. 
+        // Instead, base the sleep on the *known* l0p2_creation_time and the *current* leaf3_ts.
+        // leaf3_ts is initial_time + 1min + 1sec. l0p2_creation_time is initial_time + 1min.
+        // So, L0P2 is currently 1 second old. We need it to be l0_max_age + 1 seconds old.
+        // If l0_max_age is 2s, we need it to be 3s old. It's 1s old. So wait 2s.
+        let current_l0p2_age = leaf3_ts.signed_duration_since(l0p2_creation_time).num_seconds() as u64;
+        if time_to_wait_for_l0p2 > current_l0p2_age {
+            time_to_wait_for_l0p2 -= current_l0p2_age;
+        } else {
+            time_to_wait_for_l0p2 = 0; // Already aged enough or past, no wait needed before adding leaf4
+        }
+        if time_to_wait_for_l0p2 > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(time_to_wait_for_l0p2)).await;
+        }
+
+        // Now add leaf4 to L0P2. This will make L0P2 finalize by age.
+        // leaf4_ts should be l0p2_creation_time + l0_max_age + 1 second.
+        let leaf4_ts = l0p2_creation_time + Duration::seconds((l0_max_age + 1).try_into().unwrap());
+        let leaf4 = JournalLeaf::new(leaf4_ts, None, "age_test_container".to_string(), json!({"id": 4})).unwrap();
+        manager.add_leaf(&leaf4).await.unwrap();
+
+        // L0P2 should be finalized. No L0 page active.
+        assert!(manager.active_pages.get(&0u8).is_none(), "L0P2 should be finalized after leaf4");
+        
+        // The rollup from L0P2 should have triggered L1P1's age-based finalization.
+        // So, L1P1 should also not be active.
+        assert!(manager.active_pages.get(&1u8).is_none(), "L1P1 should be finalized by age after L0P2's rollup");
+
+        // 6. L1P1 should now be stored.
+        let stored_l1p1 = storage.load_page(1, 1).await.unwrap().expect("L1P1 (ID 1) should be stored after aging and rollup");
+        assert_eq!(stored_l1p1.page_id, 1, "Stored L1P1 page ID should be 1");
+        assert_eq!(stored_l1p1.level, 1, "Stored L1P1 level should be 1");
+        match stored_l1p1.content {
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 1, "L1P1 should contain one thrall hash from L0P0");
+                // Load L0P0 (which was stored much earlier) to get its Merkle root for comparison.
+                let l0p0_finalized = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should still be stored");
+                assert_eq!(hashes[0], l0p0_finalized.merkle_root, "L1P1 thrall hash should match L0P0's Merkle root");
+            }
+            _ => panic!("L1P1 content should be ThrallHashes"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parent_page_accumulates_multiple_thralls() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+
+        // L0: finalize after 1 leaf.
+        // L1: finalize after 3 thralls (from L0 pages). Age limits are high.
+        let l0_max_leaves = 1;
+        let l1_max_leaves = 3;
+        let high_age_limit = 3600; // 1 hour, effectively infinite for this test
+
+        let (manager, storage) = create_age_based_rollup_config_and_manager(
+            l0_max_leaves,
+            high_age_limit, // l0_max_age_secs
+            l1_max_leaves,
+            high_age_limit, // l1_max_age_secs
+        );
+
+        let time_base = Utc::now();
+
+        // Leaf 1 -> L0P0 (ID 0) finalizes -> L1P1 (ID 1) gets 1st thrall.
+        let leaf1 = JournalLeaf::new(time_base, None, "parent_accum_container".to_string(), json!({"id": "L0P0_leaf1"})).unwrap();
+        manager.add_leaf(&leaf1).await.unwrap();
+
+        let stored_l0p0 = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should be stored");
+        assert_eq!(stored_l0p0.page_id, 0);
+        let active_l1_page_entry = manager.active_pages.get(&1u8).expect("L1P1 (ID 1) should be active");
+        let active_l1_page = active_l1_page_entry.value();
+        assert_eq!(active_l1_page.page_id, 1, "Active L1 page should be L1P1 (ID 1)");
+        match &active_l1_page.content {
+            PageContent::ThrallHashes(hashes) => assert_eq!(hashes.len(), 1, "L1P1 should have 1 thrall hash"),
+            _ => panic!("L1P1 content should be ThrallHashes"),
+        }
+        assert!(storage.load_page(1, 1).await.unwrap().is_none(), "L1P1 should not be stored yet");
+
+        // Leaf 2 -> L0P2 (ID 2) finalizes -> L1P1 (ID 1) gets 2nd thrall.
+        let leaf2_ts = time_base + chrono::Duration::seconds(1); // Ensure different page window if L0 duration is short
+        let leaf2 = JournalLeaf::new(leaf2_ts, None, "parent_accum_container".to_string(), json!({"id": "L0P2_leaf1"})).unwrap();
+        manager.add_leaf(&leaf2).await.unwrap();
+
+        let stored_l0p2 = storage.load_page(0, 2).await.unwrap().expect("L0P2 (ID 2) should be stored");
+        assert_eq!(stored_l0p2.page_id, 2);
+        let active_l1_page_updated_entry = manager.active_pages.get(&1u8).expect("L1P1 (ID 1) should still be active");
+        let active_l1_page_updated = active_l1_page_updated_entry.value();
+        assert_eq!(active_l1_page_updated.page_id, 1, "Active L1 page should still be L1P1 (ID 1)");
+        match &active_l1_page_updated.content {
+            PageContent::ThrallHashes(hashes) => assert_eq!(hashes.len(), 2, "L1P1 should have 2 thrall hashes"),
+            _ => panic!("L1P1 updated content should be ThrallHashes"),
+        }
+        assert!(storage.load_page(1, 1).await.unwrap().is_none(), "L1P1 should still not be stored yet");
+
+        // Leaf 3 -> L0P4 (ID 4) finalizes -> L1P1 (ID 1) gets 3rd thrall. L1P1 should finalize.
+        let leaf3_ts = time_base + chrono::Duration::seconds(2);
+        let leaf3 = JournalLeaf::new(leaf3_ts, None, "parent_accum_container".to_string(), json!({"id": "L0P4_leaf1"})).unwrap();
+        manager.add_leaf(&leaf3).await.unwrap();
+
+        let stored_l0p4 = storage.load_page(0, 4).await.unwrap().expect("L0P4 (ID 4) should be stored");
+        assert_eq!(stored_l0p4.page_id, 4);
+
+        // L1P1 (ID 1) should now be finalized and stored.
+        let stored_l1p1 = storage.load_page(1, 1).await.unwrap().expect("L1P1 (ID 1) should be stored after 3rd thrall");
+        assert_eq!(stored_l1p1.page_id, 1);
+        match &stored_l1p1.content {
+            PageContent::ThrallHashes(hashes) => {
+                assert_eq!(hashes.len(), 3, "L1P1 should contain 3 thrall hashes");
+                assert_eq!(hashes[0], stored_l0p0.page_hash, "L1P1 thrall 1 mismatch");
+                assert_eq!(hashes[1], stored_l0p2.page_hash, "L1P1 thrall 2 mismatch");
+                assert_eq!(hashes[2], stored_l0p4.page_hash, "L1P1 thrall 3 mismatch");
+            }
+            _ => panic!("L1P1 content mismatch, expected ThrallHashes"),
+        }
+
+        // After L1P1 finalizes, the active_pages entry for level 1 should be removed.
+        // A new L1 page will only be created when the *next* L0 page finalizes and rolls up.
+        assert!(manager.active_pages.get(&1u8).is_none(), "Active L1 page should be None after L1P1 finalized and before next L0 rollup");
+
+        // Leaf 4 -> L0P5 (ID 5) finalizes -> new L1P3 (ID 3) should be created.
+        let leaf4_ts = time_base + chrono::Duration::seconds(3);
+        let leaf4 = JournalLeaf::new(leaf4_ts, None, "parent_accum_container".to_string(), json!({"id": "L0P5_leaf1"})).unwrap();
+        manager.add_leaf(&leaf4).await.unwrap();
+
+        let _stored_l0p5 = storage.load_page(0, 5).await.unwrap().expect("L0P5 (ID 5) should be stored");
+
+        let new_active_l1_page_entry = manager.active_pages.get(&1u8).expect("A new L1 page (L1P3) should be active");
+        let new_active_l1_page = new_active_l1_page_entry.value();
+        assert_eq!(new_active_l1_page.page_id, 3, "New active L1 page should be L1P3 (ID 3)");
+        match &new_active_l1_page.content {
+            PageContent::ThrallHashes(hashes) => assert_eq!(hashes.len(), 1, "L1P3 should have 1 thrall hash from L0P5"),
+            _ => panic!("L1P3 content should be ThrallHashes"),
+        }
     }
 
 }

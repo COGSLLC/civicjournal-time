@@ -17,6 +17,7 @@
 - [x] Refactor common test configuration to `src/test_utils.rs`.
 - [x] Resolve various compilation issues and warnings related to async backup and test refactoring.
 - [x] Refactor `JournalPage` to store full `JournalLeaf` objects (L0) or thrall hashes (L1+) using `PageContent` enum, removing `PageContentHash` and updating all related logic.
+- [x] Stabilize FileStorage & Core: Resolved numerous compilation errors and test failures in `FileStorage`, `core::page`, and related test suites. This included fixing issues from the `PageContentHash` removal, addressing duplicate test module definitions, and resolving a panic in Merkle tree handling within tests. All tests (67) are now passing.
 
 ## Next Steps
 
@@ -29,19 +30,46 @@
 
 2. **API Development**
    - [ ] Implement public API endpoints
-   - [~] Implement Query Interface (`src/query/`):
-     - [x] `get_leaf_inclusion_proof` (initial version):
-       - Searches active level 0 page.
-       - Partially implemented: Locates leaf hash in active L0 page, generates Merkle proof.
-       - `StorageBackend` trait updated with `async fn load_leaf_by_hash(&self, leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, CJError>`.
-       - `QueryEngine` now calls `storage.load_leaf_by_hash` to fetch the `JournalLeaf`, replacing the previous placeholder.
-       - Stub implementations for `load_leaf_by_hash` (returning `Ok(None)`) added to `FileStorage` and `MemoryStorage` to allow compilation.
-       - TODO: Implement the actual logic for `load_leaf_by_hash` in `FileStorage` and `MemoryStorage` (see Storage Backend Enhancements section below).
-       - TODO: Extend search to include archived level 0 pages (depends on `load_leaf_by_hash` and page iteration).
-     - [ ] `get_page_chain_integrity`
-     - [ ] `reconstruct_container_state`
-     - [ ] `get_delta_report`
-     - [ ] Document Query Engine API usage, including current capabilities and limitations of `get_leaf_inclusion_proof`.
+   - [ ] Implement Query Interface (`src/query/`):
+     - **Overall Strategy**: Queries will primarily operate by iterating over L0 `JournalPage`s (which store full `JournalLeaf` objects) to find relevant data. Efficiently locating and loading these L0 pages (both active and historical/archived) is key.
+     - [ ] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32]) -> Result<(JournalLeaf, MerkleProof), CJError>`**:
+       - **Objective**: Provide the full `JournalLeaf` and its Merkle inclusion proof within its L0 page.
+       - **Status**:
+         - `StorageBackend` trait has `async fn load_leaf_by_hash(&self, leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, CJError>`.
+         - Stub implementations exist in `FileStorage` and `MemoryStorage`.
+       - **Next Steps**:
+         - Implement `load_leaf_by_hash` in `FileStorage` and `MemoryStorage`. This involves:
+           - Iterating through all L0 pages (active, then persisted/archived).
+           - For each L0 page, checking its `PageContent::Leaves` for the `JournalLeaf` with the matching `leaf_hash`.
+           - If found, return `Some(leaf)`.
+         - `QueryEngine` will call `load_leaf_by_hash`. If a leaf is found:
+           - The L0 page from which the leaf was loaded must also be available (or re-loaded).
+           - Reconstruct the Merkle tree for that L0 page using the hashes of all leaves in its `PageContent::Leaves`.
+           - Generate and return the Merkle proof for the target leaf along with the `JournalLeaf` itself.
+     - [ ] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>) -> Result<serde_json::Value, CJError>`**:
+       - **Objective**: Rebuild and return the state of a specific container as it was at (or just before) `at_timestamp`.
+       - **Strategy**:
+         1. Iterate through all L0 pages (active and persisted/archived) in chronological order up to `at_timestamp`.
+         2. For each L0 page, iterate through its `JournalLeaf` entries in `PageContent::Leaves`.
+         3. Collect all `JournalLeaf` entries where `leaf.container_id == container_id` and `leaf.timestamp <= at_timestamp`.
+         4. Sort these collected leaves by their internal timestamp/sequence if necessary (though page order and leaf order within page should suffice).
+         5. Sequentially apply the `delta_payload` (from `LeafData::V1(data).content`) of each leaf. The interpretation of `content` (e.g., JSON patch, full state) depends on `LeafData::V1(data).content_type`. Assume an initial empty state for the container.
+         6. Return the final reconstructed state (e.g., as a `serde_json::Value`).
+     - [ ] **`get_delta_report(container_id: String, from_timestamp: DateTime<Utc>, to_timestamp: DateTime<Utc>) -> Result<Vec<JournalLeaf>, CJError>`**:
+       - **Objective**: Retrieve all `JournalLeaf` entries for a specific container within a given time range.
+       - **Strategy**:
+         1. Iterate through L0 pages whose time windows (`start_time`, `end_time`) overlap with the `[from_timestamp, to_timestamp]` range.
+         2. For each such L0 page, iterate through its `JournalLeaf` entries.
+         3. Collect all `JournalLeaf` entries where `leaf.container_id == container_id` and `leaf.timestamp >= from_timestamp && leaf.timestamp <= to_timestamp`.
+         4. Return the collected `Vec<JournalLeaf>`.
+     - [ ] **`get_page_chain_integrity(level: u8, from_page_id: Option<u64>, to_page_id: Option<u64>) -> Result<bool, CJError>`**:
+       - **Objective**: Verify the `prev_page_hash` chain for a sequence of pages within a specific level.
+       - **Strategy**:
+         1. Iterate through pages of the given `level`, starting from `from_page_id` (or the first page if `None`) up to `to_page_id` (or the last page if `None`).
+         2. For each page, load it and its predecessor.
+         3. Verify that `current_page.prev_page_hash == Some(previous_page.page_hash)`.
+         4. Report success if all links are valid, failure otherwise.
+     - [ ] Document Query Engine API usage, detailing parameters, return types, and current implementation status/limitations for each query.
 
 3. **Storage Improvements**
    - [x] Add compression support
@@ -59,6 +87,11 @@
     - The method will need to iterate through relevant L0 pages (initially active, then expanding to stored/archived pages) to find the page containing the leaf.
     - Once the correct L0 page is loaded, the `JournalLeaf` can be retrieved directly from its `content`.
     - An index (e.g., `DashMap<LeafHash, (Level, PageID)>`) could be introduced later for performance, but the initial implementation will rely on page scanning.
+
+### Current Refactoring & Cleanup (Immediate Next Steps)
+
+- [ ] **Merge Test Modules in `src/storage/file.rs`**: Consolidate `mod tests_to_merge` into the primary `mod tests` to centralize test logic and helpers, resolving any new warnings.
+- [ ] **Address Compiler Warnings**: Run `cargo fix` and manually address remaining warnings, primarily missing documentation and potential dead code (e.g., `create_test_page` in `file.rs`).
 
 ### Medium Term (Next 2 Months)
 

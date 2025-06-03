@@ -57,13 +57,21 @@ struct JournalPage {
   PageID             // e.g. 42
   Level              // time‐hierarchy level (0…6)
   StartTime, EndTime // page time window
-  LeafHashes[]       // array of N LeafHash values
-  MerkleRoot         // root of Merkle-tree over LeafHashes[]
-  PrevPageHash       // SHA256 of prior JournalPage.PageHash
+  // Content depends on the page's role:
+  // - Level 0 pages typically contain JournalLeaf objects.
+  // - Higher-level pages (L1+) typically contain hashes of their child pages (ThrallHashes).
+  PageContent        // Enum: Leaves(Vec<JournalLeaf>) or ThrallHashes(Vec<[u8; 32]>)
+  MerkleRoot         // root of Merkle-tree over PageContent
+  PrevPageHash       // SHA256 of prior JournalPage.PageHash at the same level
   PageHash           // SHA256(PageID ∥ Level ∥ StartTime ∥ EndTime ∥ MerkleRoot ∥ PrevPageHash)
-  TSProof            // external timestamp proof for MerkleRoot
-  Thralls[]          // references to child PageIDs for deeper levels
+  TSProof            // external timestamp proof for MerkleRoot (optional)
 }
+
+// Note: PageContent is an enum in the implementation:
+// enum PageContent {
+//   Leaves(Vec<JournalLeaf>),
+//   ThrallHashes(Vec<[u8; 32]>), // Hashes of finalized child pages
+// }
 ```
 
 ---
@@ -134,9 +142,11 @@ No blocks, no forks, no nodes: **just an auditable, hierarchical Merkle log**.
 
 ### 8. Storage & Formats
 
-* **Files:** each `JournalPage` → one JSON file (`page_<Level>_<PageID>.json`)
-* **Dirs:** `/journal/level_<L>/page_<ID>.json`
-* **Marker:** `.civicjournal-time` at repo root
+* **Files:** Each `JournalPage` is stored as a single binary file with a `.cjt` extension (e.g., `page_<PageID>.cjt`).
+  * The file starts with a custom header: 4-byte magic string (`CJTP`) and a 1-byte format version.
+  * The rest of the file contains the serialized `JournalPage` data, potentially compressed based on configuration.
+* **Dirs:** Pages are organized by level: `/journal/level_<L>/page_<PageID>.cjt` (relative to the storage base path).
+* **Marker:** A `.civicjournal-time` marker file may exist at the storage base path to identify it.
 
 ---
 
