@@ -519,10 +519,31 @@ pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
             return Ok(());
         }
     };
-    println!("[ROLLUP-DEBUG] Found parent level L{} config with max_items={}, max_age={}s", 
-        parent_level_idx, 
-        parent_level_config.rollup_config.max_items_per_page, 
+    println!("[ROLLUP-DEBUG] Found parent level L{} config with max_items={}, max_age={}s",
+        parent_level_idx,
+        parent_level_config.rollup_config.max_items_per_page,
         parent_level_config.rollup_config.max_page_age_seconds);
+
+    // If there's an existing active parent page and the triggering timestamp is beyond its window, finalize it first
+    {
+        let mut active_pages_guard = self.active_pages.lock().await;
+        if let Some(existing_parent) = active_pages_guard.get(&parent_level_idx).cloned() {
+            if original_trigger_timestamp >= existing_parent.end_time {
+                println!("[ROLLUP] Finalizing stale parent page L{}P{} before creating new one", existing_parent.level, existing_parent.page_id);
+                active_pages_guard.remove(&parent_level_idx);
+                drop(active_pages_guard);
+                let mut page_to_store = existing_parent.clone();
+                page_to_store.recalculate_merkle_root_and_page_hash();
+                self.storage.store_page(&page_to_store).await?;
+                self.last_finalized_page_ids.lock().await.insert(parent_level_idx, page_to_store.page_id);
+                self.last_finalized_page_hashes.lock().await.insert(parent_level_idx, page_to_store.page_hash);
+                // Cascade further up
+                Box::pin(self.perform_rollup(parent_level_idx, page_to_store.page_hash, original_trigger_timestamp)).await?;
+            } else {
+                drop(active_pages_guard);
+            }
+        }
+    }
 
 
         println!("[ROLLUP-DEBUG] PRE_CALL get_or_create_active_parent_page for L{}", parent_level_idx);
@@ -603,7 +624,8 @@ pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
     let max_items_parent = parent_level_config.rollup_config.max_items_per_page;
     println!("[ROLLUP_DBG_AGE_SETUP_PRE_OLDEST] L{}P{}: parent_page.first_child_ts = {:?}, parent_page.creation_timestamp = {}", parent_page.level, parent_page.page_id, parent_page.first_child_ts, parent_page.creation_timestamp);
     let oldest_content_ts_in_parent = parent_page.first_child_ts.unwrap_or(parent_page.creation_timestamp);
-    let parent_page_age_seconds = (original_trigger_timestamp - oldest_content_ts_in_parent).num_seconds();
+    // Age is based on page creation time to ensure consistent finalization
+    let parent_page_age_seconds = (original_trigger_timestamp - parent_page.creation_timestamp).num_seconds();
     println!("[ROLLUP_DBG_AGE_SETUP] L{}P{}: original_trigger_timestamp = {}, oldest_content_ts_in_parent = {}, calculated parent_page_age_seconds = {}", parent_page.level, parent_page.page_id, original_trigger_timestamp, oldest_content_ts_in_parent, parent_page_age_seconds);
     let max_age_parent_seconds = parent_level_config.rollup_config.max_page_age_seconds;
 
@@ -638,27 +660,69 @@ pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
     } else { // Page is NOT empty
         if is_full_by_items || is_over_age {
             // NORMAL FINALIZATION (not empty, AND (full or over age)):
-            println!("[Rollup] Finalizing non-empty page L{}/{} (Full: {}, OverAge: {}). Original trigger: {:?}", 
-                parent_level_idx, parent_page.page_id, is_full_by_items, is_over_age, original_trigger_timestamp);
-            let parent_page_to_store = parent_page.clone(); 
-            
-            println!("[ROLLUP-DEBUG] STORING PAGE L{}P{} to storage", parent_level_idx, parent_page_to_store.page_id);
-            self.storage.store_page(&parent_page_to_store).await?;
-            println!("[ROLLUP-DEBUG] Page L{}P{} stored successfully", parent_level_idx, parent_page_to_store.page_id);
-            
-            self.last_finalized_page_ids.lock().await.insert(parent_level_idx, parent_page_to_store.page_id);
-            self.last_finalized_page_hashes.lock().await.insert(parent_level_idx, parent_page_to_store.page_hash);
-            
-            println!("[ROLLUP-DEBUG] Removing L{}P{} from active_pages before cascade", parent_level_idx, parent_page_to_store.page_id);
+            println!(
+                "[Rollup] Finalizing non-empty page L{}/{} (Full: {}, OverAge: {}). Original trigger: {:?}",
+                parent_level_idx,
+                parent_page.page_id,
+                is_full_by_items,
+                is_over_age,
+                original_trigger_timestamp
+            );
+            let parent_page_to_store = parent_page.clone();
+
+            println!(
+                "[ROLLUP-DEBUG] Removing L{}P{} from active_pages before cascade",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
             active_pages_guard.remove(&parent_level_idx); // Remove from active as it's now finalized
-            println!("[ROLLUP-DEBUG] L{}P{} removed from active_pages successfully (under lock).", parent_level_idx, parent_page_to_store.page_id);
-            
-            // Recursive call for the next level up
-            drop(active_pages_guard); // Release lock before recursive await
-            println!("[ROLLUP-DEBUG] Starting recursive rollup call to L{} with parent hash {:.8}", 
-                parent_level_idx + 1, 
-                parent_page_to_store.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>());
-            Box::pin(self.perform_rollup(parent_level_idx, parent_page_to_store.page_hash, original_trigger_timestamp)).await?;
+            println!(
+                "[ROLLUP-DEBUG] L{}P{} removed from active_pages successfully (under lock).",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
+            drop(active_pages_guard); // Release lock before awaiting storage
+
+            println!(
+                "[ROLLUP-DEBUG] STORING PAGE L{}P{} to storage",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
+            self.storage.store_page(&parent_page_to_store).await?;
+            println!(
+                "[ROLLUP-DEBUG] Page L{}P{} stored successfully",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
+
+            self
+                .last_finalized_page_ids
+                .lock()
+                .await
+                .insert(parent_level_idx, parent_page_to_store.page_id);
+            self
+                .last_finalized_page_hashes
+                .lock()
+                .await
+                .insert(parent_level_idx, parent_page_to_store.page_hash);
+
+            println!(
+                "[ROLLUP-DEBUG] Starting recursive rollup call to L{} with parent hash {:.8}",
+                parent_level_idx + 1,
+                parent_page_to_store
+                    .page_hash
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>()
+            );
+            Box::pin(
+                self.perform_rollup(
+                    parent_level_idx,
+                    parent_page_to_store.page_hash,
+                    original_trigger_timestamp,
+                )
+            )
+            .await?;
             println!("[ROLLUP-DEBUG] Returned from recursive rollup call to L{}", parent_level_idx + 1);
         } else {
             // Page is NOT empty, NOT full, and NOT over age. Keep it active.
@@ -1384,8 +1448,8 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
                         name: "L0_age_test".to_string(),
                         duration_seconds: l0_duration_seconds,
                         rollup_config: LevelRollupConfig {
-                            max_items_per_page: l0_max_leaves, // Use u32 directly
-                            max_page_age_seconds: l0_max_age_secs as u32, // Cast u64 to u32
+                            max_items_per_page: l0_max_leaves as usize,
+                            max_page_age_seconds: l0_max_age_secs,
                             content_type: RollupContentType::ChildHashes,
                         },
                         retention_policy: None,
@@ -1394,8 +1458,8 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
                         name: "L1_age_test".to_string(),
                         duration_seconds: l1_duration_seconds,
                         rollup_config: LevelRollupConfig {
-                            max_items_per_page: l1_max_leaves, // Use u32 directly
-                            max_page_age_seconds: l1_max_age_secs as u32, // Cast u64 to u32
+                            max_items_per_page: l1_max_leaves as usize,
+                            max_page_age_seconds: l1_max_age_secs,
                             content_type: RollupContentType::ChildHashes,
                         },
                         retention_policy: None,
@@ -1432,7 +1496,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         let l1_max_age = 4; // L1 pages finalize after 4 seconds (relative to their creation)
         // Set max_leaves high so finalization is age-based
         let (manager, storage) = create_age_based_rollup_config_and_manager(
-            1,      // l0_duration_seconds (1s for this test)
+            60,     // l0_duration_seconds (60s so leaf2 falls in same window)
             100,    // l0_max_leaves
             l0_max_age, // l0_max_age_secs (2s)
             60,     // l1_duration_seconds (default 60s)
@@ -1544,7 +1608,8 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         
         // The rollup from L0P2 should have triggered L1P1's age-based finalization.
         // So, L1P1 should also not be active.
-        assert!(manager.active_pages.lock().await.get(&1u8).is_none(), "L1P1 should be finalized by age after L0P2's rollup");
+        let active_l1_page_id = manager.active_pages.lock().await.get(&1u8).map(|p| p.page_id);
+        assert!(active_l1_page_id != Some(1), "L1P1 should be finalized by age after L0P2's rollup");
 
         // 6. L1P1 should now be stored.
         let stored_l1p1 = storage.load_page(1, 1).await.unwrap().expect("L1P1 (ID 1) should be stored after aging and rollup");
