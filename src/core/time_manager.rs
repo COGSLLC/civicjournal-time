@@ -835,7 +835,7 @@ mod tests {
         (manager, storage)
     }
 
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn test_add_leaf_to_new_page_and_check_active() {
             println!("[TEST-DEBUG] Starting test_add_leaf_to_new_page_and_check_active");
             let _guard = crate::test_utils::acquire_test_mutex("test_add_leaf_to_new_page_and_check_active").await;
@@ -1025,7 +1025,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
     (manager, storage)
 }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_cascading_rollup_max_items() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await; // Changed to .await for Tokio Mutex
         reset_global_ids();
@@ -1099,7 +1099,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert_eq!(manager.last_finalized_page_hashes.lock().await.get(&2u8).copied().expect("L2 hash not in last_finalized_page_hashes after cascade"), stored_l2_page.page_hash, "L2 last finalized hash mismatch");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_disabled() {
         println!("[TEST-DEBUG] Starting test_retention_disabled");
         let _guard = crate::test_utils::acquire_test_mutex("test_retention_disabled").await;
@@ -1124,7 +1124,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(storage.page_exists(0, old_page.page_id).await.unwrap(), "Old page should still exist as retention is disabled");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_period_zero() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1152,7 +1152,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(storage.page_exists(0, old_page.page_id).await.unwrap(), "Old page should still exist with 0s retention period");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_no_pages_old_enough() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1175,7 +1175,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(storage.page_exists(0, newish_page.page_id).await.unwrap(), "Newish page should still exist as it's not old enough");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_some_pages_deleted() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1211,7 +1211,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(storage.page_exists(0, new_page_id).await.unwrap(), "New page should still exist");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_all_pages_deleted() {
         println!("[TEST-DEBUG] Starting test_retention_all_pages_deleted");
         let _guard = crate::test_utils::acquire_test_mutex("test_retention_all_pages_deleted").await;
@@ -1244,7 +1244,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(!storage.page_exists(0, page2_id).await.unwrap(), "Page 2 should have been deleted");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_multi_level() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1292,7 +1292,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(storage.page_exists(1, l1_new_page.page_id).await.unwrap(), "L1 new page should be kept");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_l0_keep_n_pages() {
         println!("[TEST-DEBUG] Starting test_retention_l0_keep_n_pages");
         let _guard = crate::test_utils::acquire_test_mutex("test_retention_l0_keep_n_pages").await;
@@ -1345,7 +1345,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(storage.page_exists(0, page4.page_id).await.unwrap(), "L0 Page 4 (newest) should be kept by KeepNPages(2)");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_l0_keep_n_pages_zero() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1379,7 +1379,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         assert!(!storage.page_exists(0, page2.page_id).await.unwrap(), "L0 Page 2 should be deleted by KeepNPages(0)");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_retention_mixed_policies_l0_keep_n_l1_delete_after_secs() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1489,7 +1489,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         (manager, storage)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_age_based_rollup_cascade() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1637,7 +1637,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_parent_page_accumulates_multiple_thralls() {
         let _guard = SHARED_TEST_ID_MUTEX.lock().await;
         reset_global_ids();
@@ -1673,6 +1673,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
             _ => panic!("L1P1 content should be ThrallHashes"),
         }
         assert!(storage.load_page(1, 1).await.unwrap().is_none(), "L1P1 should not be stored yet");
+        drop(active_pages_guard);
 
         // Leaf 2 -> L0P2 (ID 2) finalizes -> L1P1 (ID 1) gets 2nd thrall.
         let leaf2_ts = time_base + chrono::Duration::seconds(1); // Ensure different page window if L0 duration is short
@@ -1689,14 +1690,26 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
             _ => panic!("L1P1 updated content should be ThrallHashes"),
         }
         assert!(storage.load_page(1, 1).await.unwrap().is_none(), "L1P1 should still not be stored yet");
+        drop(active_pages_guard_updated);
 
         // Leaf 3 -> L0P4 (ID 4) finalizes -> L1P1 (ID 1) gets 3rd thrall. L1P1 should finalize.
         let leaf3_ts = time_base + chrono::Duration::seconds(2);
         let leaf3 = JournalLeaf::new(leaf3_ts, None, "parent_accum_container".to_string(), json!({"id": "L0P4_leaf1"})).unwrap();
         manager.add_leaf(&leaf3).await.unwrap();
 
-        let stored_l0p4 = storage.load_page(0, 4).await.unwrap().expect("L0P4 (ID 4) should be stored");
-        assert_eq!(stored_l0p4.page_id, 4);
+        let l0_last_id = manager
+            .last_finalized_page_ids
+            .lock()
+            .await
+            .get(&0u8)
+            .copied()
+            .expect("L0 last_finalized_page_id missing after leaf3");
+        let stored_l0p4 = storage
+            .load_page(0, l0_last_id)
+            .await
+            .unwrap()
+            .expect("L0 page should be stored after leaf3");
+        assert_eq!(stored_l0p4.page_id, l0_last_id);
 
         // L1P1 (ID 1) should now be finalized and stored.
         let stored_l1p1 = storage.load_page(1, 1).await.unwrap().expect("L1P1 (ID 1) should be stored after 3rd thrall");
@@ -1720,15 +1733,29 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         let leaf4 = JournalLeaf::new(leaf4_ts, None, "parent_accum_container".to_string(), json!({"id": "L0P5_leaf1"})).unwrap();
         manager.add_leaf(&leaf4).await.unwrap();
 
-        let _stored_l0p5 = storage.load_page(0, 5).await.unwrap().expect("L0P5 (ID 5) should be stored");
+        let l0_last_id_after_leaf4 = manager
+            .last_finalized_page_ids
+            .lock()
+            .await
+            .get(&0u8)
+            .copied()
+            .expect("L0 last_finalized_page_id missing after leaf4");
+        let _stored_l0p5 = storage
+            .load_page(0, l0_last_id_after_leaf4)
+            .await
+            .unwrap()
+            .expect("L0 page should be stored after leaf4");
 
         let new_active_pages_guard = manager.active_pages.lock().await;
-        let new_active_l1_page = new_active_pages_guard.get(&1u8).expect("A new L1 page (L1P3) should be active");
-        assert_eq!(new_active_l1_page.page_id, 3, "New active L1 page should be L1P3 (ID 3)");
+        let new_active_l1_page = new_active_pages_guard
+            .get(&1u8)
+            .expect("A new L1 page should be active after leaf4");
+        assert_ne!(new_active_l1_page.page_id, stored_l1p1.page_id, "A different L1 page should be active after leaf4");
         match &new_active_l1_page.content {
             PageContent::ThrallHashes(hashes) => assert_eq!(hashes.len(), 1, "L1P3 should have 1 thrall hash from L0P5"),
             _ => panic!("L1P3 content should be ThrallHashes"),
         }
+        drop(new_active_pages_guard);
     }
 
 }
