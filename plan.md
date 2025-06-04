@@ -18,6 +18,7 @@
 - [x] Resolve various compilation issues and warnings related to async backup and test refactoring.
 - [x] Refactor `JournalPage` to store full `JournalLeaf` objects (L0) or thrall hashes (L1+) using `PageContent` enum, removing `PageContentHash` and updating all related logic.
 - [x] Stabilize FileStorage & Core: Resolved numerous compilation errors and test failures in `FileStorage`, `core::page`, and related test suites. This included fixing issues from the `PageContentHash` removal, addressing duplicate test module definitions, and resolving a panic in Merkle tree handling within tests. All tests (67) are now passing.
+- [x] Implement Special Event-Triggered Rollups: Added capability for rollups to be triggered by external system events, complementing time/size-based triggers, and updated documentation (`ROLLUP.md`, `CivicJournalSpec.txt`).
 
 ## Next Steps
 
@@ -153,30 +154,30 @@ fn get_next_leaf_id() -> u64 { /* ... */ 0 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JournalLeaf {
-    pub leaf_id: u64,                    // LeafID: unique, incrementing
-    pub timestamp: DateTime<Utc>,        // Timestamp: e.g. 2025-06-01T12:00:00Z
-    pub prev_hash: Option<[u8; 32]>,     // PrevHash: SHA256 of previous LeafHash (Option for first leaf)
-    pub container_id: String,            // ContainerID: "proposal:XYZ" or "user:ABC"
-    pub delta_payload: String,           // DeltaPayload: JSON/YAML patch or full record (String for now, consider Vec<u8> or a generic type)
-    pub leaf_hash: [u8; 32],             // LeafHash: SHA256(...)
+    pub leaf_id: u64,                    // Unique, incrementing ID for the leaf
+    pub timestamp: i64,                  // Unix timestamp (seconds) of when the leaf was recorded
+    pub prev_hash: Option<[u8; 32]>,     // Hash of the previous leaf in the same container's logical chain (if any)
+    pub container_id: String,            // Identifier for the data entity this leaf pertains to
+    pub delta_payload: Vec<u8>,          // The actual data/change, as a byte vector
+    pub leaf_hash: [u8; 32],             // SHA256 hash of key leaf fields
 }
 
 impl JournalLeaf {
     pub fn new(
-        timestamp: DateTime<Utc>,
+        timestamp: i64,
         prev_hash: Option<[u8; 32]>,
         container_id: String,
-        delta_payload: String,
+        delta_payload: Vec<u8>,
     ) -> Self {
         let leaf_id = get_next_leaf_id(); // This needs a proper source
         let mut hasher = Sha256::new();
         hasher.update(leaf_id.to_be_bytes());
-        hasher.update(timestamp.to_rfc3339().as_bytes());
+        hasher.update(timestamp.to_string().as_bytes());
         if let Some(ph) = prev_hash {
             hasher.update(ph);
         }
         hasher.update(container_id.as_bytes());
-        hasher.update(delta_payload.as_bytes());
+        hasher.update(delta_payload);
         let leaf_hash: [u8; 32] = hasher.finalize().into();
 
         JournalLeaf {
@@ -195,15 +196,11 @@ impl JournalLeaf {
 
 **File**: `src/core/page.rs`
 
-**Status**: The original plan below has been superseded by a major refactoring (Completed May 2025). `JournalPage` now uses a `PageContent` enum to store either full `JournalLeaf` objects (for L0 pages) or thrall page hashes (for L1+ pages), and the `PageContentHash` enum has been removed. See `architecture.md` for the current structure.
-
-**Original Plan (Outdated):**
-
 **Objective**: Define the `JournalPage` structure, manage its leaf/thrall hashes, and calculate its hash.
 
 **Details**:
 *   Define struct fields as per `CivicJournalSpec.txt`.
-*   Store `LeafHashes` (for level 0) or `PageHash` of thralls (for higher levels).
+*   Store `Leaves(Vec<JournalLeaf>)` for level 0 or `ThrallHashes(Vec<[u8; 32]>)` for higher levels.
 *   Implement `PageHash` calculation.
 
 ```rust
@@ -211,37 +208,36 @@ impl JournalLeaf {
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use serde::{Serialize, Deserialize};
-use crate::core::merkle::MerkleRoot; // Assuming MerkleRoot is [u8; 32]
 
 // Placeholder for a global or level-specific unique ID generator
-fn get_next_page_id() -> u64 { /* ... */ 0 }
-
+fn get_next_page_id() -> String { /* ... */ "0".to_string() }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum PageContentHash {
-    LeafHash([u8; 32]),
-    ThrallPageHash([u8; 32]),
+pub enum PageContent {
+    Leaves(Vec<JournalLeaf>),
+    ThrallHashes(Vec<[u8; 32]>),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JournalPage {
-    pub page_id: u64,                      // PageID: e.g. 42
-    pub level: u8,                         // Level: time-hierarchy level (0…6)
-    pub start_time: DateTime<Utc>,         // StartTime: page time window
-    pub end_time: DateTime<Utc>,           // EndTime: page time window
-    pub content_hashes: Vec<PageContentHash>, // Array of N LeafHash or ThrallPageHash values
-    pub merkle_root: MerkleRoot,           // MerkleRoot: root of Merkle-tree over content_hashes[]
-    pub prev_page_hash: Option<[u8; 32]>,  // PrevPageHash: SHA256 of prior JournalPage.PageHash (Option for first page in a chain/level)
-    pub page_hash: [u8; 32],               // PageHash: SHA256(...)
-    pub ts_proof: Option<Vec<u8>>,         // TSProof: external timestamp proof for MerkleRoot (Option for now)
-    // Thralls[]: Implicitly handled by content_hashes for higher levels.
-    // If explicit PageIDs of thralls are needed, add a field:
-    // pub thrall_page_ids: Option<Vec<u64>>,
+    pub page_id: String,                 // Unique identifier for the page
+    pub level: u8,                       // Time-hierarchy level (0-6)
+    pub start_time: i64,                 // Unix timestamp for the start of the page's time window
+    pub end_time: i64,                   // Unix timestamp for the end of the page's time window
+    pub content: PageContent,            // Enum: Leaves or ThrallHashes
+    pub merkle_root: [u8; 32],           // Root of Merkle tree over the page's content
+    pub prev_page_hash: Option<[u8; 32]>,// Hash of the previous JournalPage at the same level (if any)
+    pub page_hash: [u8; 32],             // SHA256 hash of key page fields
+    pub ts_proof: Option<Vec<u8>>,       // External timestamp proof for MerkleRoot (e.g., RFC3161, optional)
 }
 
 impl JournalPage {
     pub fn new(
         level: u8,
+        start_time: i64,
+        end_time: i64,
+        content: PageContent,
+        merkle_root: [u8; 32],
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
         content_hashes: Vec<PageContentHash>,

@@ -18,16 +18,31 @@ The rollup mechanism is responsible for grouping, aggregating, and hierarchicall
 
 ### 2. Terminology & Definitions
 
-* **Leaf (JournalLeaf):** A single raw event or delta, represented as a struct (e.g. `{ timestamp, object_id, field_name, old_value, new_value }`).
+* **Leaf (JournalLeaf):** A single raw event or delta. Its structure is defined as (see `src/core/leaf.rs` for the canonical definition):
+  ```rust
+  pub struct JournalLeaf {
+      pub leaf_id: u64,
+      pub timestamp: DateTime<Utc>,
+      pub prev_hash: Option<[u8; 32]>,
+      pub container_id: String, // Serves as ObjectID for NetPatches rollup
+      pub delta_payload: serde_json::Value, // Assumed to be Value::Object for NetPatch transformation
+      pub leaf_hash: [u8; 32], // SHA256(leaf_id ∥ timestamp ∥ prev_hash ∥ container_id ∥ delta_payload)
+  }
+  ```
+  For L0 Leaves to NetPatches rollup (if configured for the parent level via `RollupContentType`), `container_id` is used as the `ObjectID`, and `delta_payload` is expected to be a `serde_json::Value::Object` where keys are `FieldNames` and values are the field values.
 
 * **Level N page (“PageN”):** A container that aggregates either raw leaves (when N = 0) or “child items” (when N > 0). Each page has:
   • `level: u8` – its hierarchy level (0 for raw leaves, 1 for first aggregation, etc.).
   • `page_id: u64` – a monotonically increasing identifier for that page within its level.
   • `creation_timestamp: DateTime<Utc>` – the window’s start (floor(T, epoch\_length\_N)).
   • `window_end: DateTime<Utc>` – equals `creation_timestamp + epoch_length_N`.
-  • `content` – either:
-  – For Level 0: `Vec<JournalLeaf>` (all raw deltas in that epoch).
-  – For Level N>0: either `Vec<ChildHash>` (if storing Merkle hashes) or `HashMap<ObjectID, FieldPatch>` (if storing net state patches).
+  • `content: PageContent` – an enum representing the page's contents (see `src/core/page.rs` for canonical definition):
+    ```rust
+  pub enum PageContent {
+      Leaves(Vec<JournalLeaf>),         // Stores full JournalLeaf objects, typically for L0 pages.
+      ThrallHashes(Vec<[u8; 32]>),    // Stores page hashes of finalized child pages, typically for L1+ pages.
+  }
+  ```
   • `merkle_root: String` – cryptographic root of `content` (if using Merkle).
   • `first_child_timestamp: DateTime<Utc>` – timestamp of the earliest item in `content`.
   • `last_child_timestamp: DateTime<Utc>` – timestamp of the latest item in `content`.
@@ -41,6 +56,21 @@ The rollup mechanism is responsible for grouping, aggregating, and hierarchicall
 * **Active Pages:** An in‐memory map `active_pages: HashMap<level_u8, Page>` that holds exactly one open (unfinalized) page per level (if it exists).
 
 * **Trigger Timestamp:** The `JournalLeaf.timestamp` of the current leaf that caused a child page to finalize and roll up. At Level 0 it’s the new leaf’s timestamp; at higher levels it’s the same triggering timestamp passed from the child.
+
+---
+
+### 2.1. Special Event-Triggered Rollups
+
+In addition to the standard size-based and age-based triggers defined in the configuration, rollups can also be initiated by special events signaled from an external system, such as a database or an application event bus.
+
+*   **Mechanism**: The `civicjournal-time` software can be designed to listen for these external event notifications (e.g., via a dedicated API endpoint, a message queue subscription, or other inter-process communication).
+*   **Triggering Logic**: Upon receiving such an event, the system can programmatically trigger a rollup for the relevant time page(s) associated with the event's context (e.g., a specific `container_id` or a time range).
+*   **Behavior**: This rollup would proceed even if the page(s) haven't met their standard `max_items_per_page` or `max_page_age_seconds` thresholds. The standard finalization logic (calculating Merkle root, persisting the page, and propagating to parent) would apply.
+*   **Use Cases**: This allows for more dynamic and context-aware finalization. For example:
+    *   Finalizing a page immediately after a critical transaction is logged.
+    *   Rolling up data related to a specific business process milestone.
+    *   Ensuring specific data is anchored and provable more rapidly than standard time/size triggers would allow.
+*   **Configuration**: The specifics of which events trigger rollups and how they are communicated to `civicjournal-time` would typically be part of the application-level integration and potentially involve additional configuration beyond the core `rollup` settings.
 
 ---
 
@@ -60,14 +90,20 @@ levels = [
 
 [rollup]
 # same index ordering as `levels[]`
-max_leaves_per_page = [1000, 500, 200, 100]        # index 0→L0, 1→L1, 2→L2, 3→L3
-max_page_age_seconds = [60, 3600, 86400, 2592000]   # matching epoch lengths
+max_items_per_page = [1000, 500, 200, 100]         # Max items (leaves for L0, child page representations for L_N>0) per page.
+max_page_age_seconds = [60, 3600, 86400, 2592000]   # Max age of a page before rollup.
+# Defines the type of content to store in L_N > 0 pages for this level's parent
+# (or how this level's pages are represented in its parent).
+# This corresponds to the `RollupContentType` enum (e.g., ChildHashes, NetPatches) in `LevelRollupConfig`.
+# Example: content_types[N] refers to the content type of the parent of Level N pages.
+content_types = ["ChildHashes", "ChildHashes", "NetPatches", "NetPatches"] # Example values
 ```
 
 **Notes:**
 
 * The `epoch_seconds` and `max_page_age_seconds` need not be identical, but typically they match or exceed.
-* `max_leaves_per_page[N]` — the number of items that force size‐based rollup at Level N. For N = 0, that’s raw leaves; for N > 0, that’s child‐level aggregates (hashes or patches).
+* `max_items_per_page[N]` — the maximum number of items that force size‐based rollup at Level N. For N = 0, items are `JournalLeaf` objects. For N > 0, items are the representations of finalized child pages (e.g., their page hashes if `content_types[N]` (for parent) indicates `ChildHashes`).
+* `content_types[N]` — (Illustrative for this TOML example) This array would conceptually map to the `RollupContentType` for the parent of Level N pages. In the actual `LevelRollupConfig` struct, `content_type` is a direct field.
 
 ---
 
@@ -76,45 +112,43 @@ max_page_age_seconds = [60, 3600, 86400, 2592000]   # matching epoch lengths
 1. **JournalLeaf (Level 0 item)**
 
    ```rust
-   struct JournalLeaf {
-     timestamp: DateTime<Utc>,
-     object_id: String,
-     field_name: String,
-     old_value: serde_json::Value,
-     new_value: serde_json::Value,
+   pub struct JournalLeaf {
+       pub leaf_id: u64,
+       pub timestamp: DateTime<Utc>,
+       pub prev_hash: Option<[u8; 32]>,
+       pub container_id: String, // Serves as ObjectID for NetPatches rollup
+       pub delta_payload: serde_json::Value, // Assumed to be Value::Object for NetPatch transformation
+       pub leaf_hash: [u8; 32], // SHA256(leaf_id ∥ timestamp ∥ prev_hash ∥ container_id ∥ delta_payload)
    }
    ```
+
 2. **LevelNPage**
 
    ```rust
-   struct LevelPage {
-     level: u8,
-     page_id: u64,
-     creation_timestamp: DateTime<Utc>,
-     window_end: DateTime<Utc>,
-     content: PageContent,   // see enum below
-     merkle_root: Option<String>,
-     first_child_timestamp: Option<DateTime<Utc>>,
-     last_child_timestamp: Option<DateTime<Utc>>,
+   pub struct JournalPage {
+       level: u8,
+       page_id: u64,
+       creation_timestamp: DateTime<Utc>,
+       window_end: DateTime<Utc>,
+       content: PageContent,   // see enum below
+       merkle_root: Option<String>,
+       first_child_timestamp: Option<DateTime<Utc>>,
+       last_child_timestamp: Option<DateTime<Utc>>,
    }
 
-   enum PageContent {
-     /// Level 0: raw leaves
-     Leaves(Vec<JournalLeaf>),
-     /// Level N>0: either
-     ///   * Child hashes (Merkle)
-     ///   * Or net state patches (object→final value)
-     ChildHashes(Vec<String>),              // if using Merkle hash propagation
-     NetPatches(HashMap<String, HashMap<String, serde_json::Value>>),
+   pub enum PageContent {
+       Leaves(Vec<JournalLeaf>),         // Stores full JournalLeaf objects, typically for L0 pages.
+       ThrallHashes(Vec<[u8; 32]>),    // Stores page hashes of finalized child pages, typically for L1+ pages.
    }
    ```
+
 3. **TimeHierarchyManager**
 
    ```rust
    struct TimeHierarchyManager {
-     config: Config,  // holds epoch lengths, thresholds, etc.
-     active_pages: HashMap<u8, LevelPage>,  
-     next_page_ids: Vec<u64>,  // next page_id counter for each level
+       config: Config,  // holds epoch lengths, thresholds, etc.
+       active_pages: HashMap<u8, JournalPage>,  
+       next_page_ids: Vec<u64>,  // next page_id counter for each level
    }
    ```
 
@@ -145,22 +179,26 @@ max_page_age_seconds = [60, 3600, 86400, 2592000]   # matching epoch lengths
 
 4. **persist\_page(page: \&LevelPage) → Result<(), CJError>**
 
-   * Serializes the finalized page (level, page\_id, window\_start, window\_end, merkle\_root or net patches, first/last child timestamps) into a JSON (or chosen format) file on disk.
+   * Serializes the finalized `JournalPage` and stores it in a file with a `.cjt` extension.
+   * The file format includes a 6-byte header:
+     1. Magic String (4 bytes): `CJTP` (CivicJournal Time Page)
+     2. Format Version (1 byte): e.g., `1` (as defined by `FORMAT_VERSION` constant)
+     3. Compression Algorithm (1 byte): `0` for None, `1` for Zstd, `2` for Lz4, `3` for Snappy (numeric value of the `CompressionAlgorithm` enum).
+   * The header is followed by the (potentially) compressed and serialized `JournalPage` data.
+   * The filename typically includes the level and page ID, and pages are stored in level-specific directories (e.g., `storage_base_path/level_0/page_123.cjt`).
    * Directory structure:
 
      ```
      ./journal/
        level_0/
-         YYYY-MM-DD/
-           HH-MM.json     # for minute‐level pages, e.g. 2025-06-03/12-34.json
+         YYYY-MM-DD-HH-MM_pageID.cjt
        level_1/
-         YYYY-MM-DD/
-           HH.json        # for hour‐level pages, e.g. 2025-06-03/12.json
+         YYYY-MM-DD-HH_pageID.cjt
        level_2/
-         YYYY-MM-DD.json  # for day‐level pages, e.g. 2025-06-03.json
+         YYYY-MM-DD_pageID.cjt
        level_3/
-         YYYY-MM.json     # for month‐level pages, e.g. 2025-06.json
-       …  
+         YYYY-MM_pageID.cjt
+       …
      ```
 
 ---
@@ -217,7 +255,7 @@ max_page_age_seconds = [60, 3600, 86400, 2592000]   # matching epoch lengths
 
    ```rust
    let age_seconds = (leaf.timestamp - page0.creation_timestamp).num_seconds();
-   let size_condition = page0.content.len() >= config.max_leaves_per_page[0];
+   let size_condition = page0.content.len() >= config.max_items_per_page[0];
    let age_condition = age_seconds >= config.max_page_age_seconds[0] && !page0.content.is_empty();
    if size_condition || age_condition {
       // Finalize L0 page
@@ -281,7 +319,7 @@ async fn perform_rollup(&mut self, finalized_level: u8, trigger_ts: DateTime<Utc
 
     // 7. Check rollup conditions for parent:
     let age_secs = (trigger_ts - parent_page.creation_timestamp).num_seconds();
-    let size_condition = parent_page.content.len() >= self.config.max_leaves_per_page[parent_level];
+    let size_condition = parent_page.content.len() >= self.config.max_items_per_page[parent_level];
     let age_condition = age_secs >= self.config.max_page_age_seconds[parent_level] && !parent_page.content.is_empty();
 
     if size_condition || age_condition {
@@ -307,42 +345,28 @@ async fn perform_rollup(&mut self, finalized_level: u8, trigger_ts: DateTime<Utc
 
 ### 7. Persistence & Directory Structure
 
-When finalizing a page at Level N, write a JSON file with this schema:
+When finalizing a page at Level N, write a file with a `.cjt` extension.
 
-```jsonc
-{
-  "level": N,
-  "page_id": 42,
-  "window_start": "2025-06-03T12:00:00Z",
-  "window_end":   "2025-06-03T13:00:00Z",
-  "merkle_root":  "abcd1234….",
-  "first_child_ts": "2025-06-03T12:00:15Z",
-  "last_child_ts":  "2025-06-03T12:59:59Z",
-  // Then either:
-  "child_hashes": [ "hash_of_L(N-1)_page1", "hash_of_L(N-1)_page2", … ]
+* The file format includes a 6-byte header:
+  1. Magic String (4 bytes): `CJTP` (CivicJournal Time Page)
+  2. Format Version (1 byte): e.g., `1` (as defined by `FORMAT_VERSION` constant)
+  3. Compression Algorithm (1 byte): `0` for None, `1` for Zstd, `2` for Lz4, `3` for Snappy (numeric value of the `CompressionAlgorithm` enum).
+* The header is followed by the (potentially) compressed and serialized `JournalPage` data.
+* The filename typically includes the level and page ID, and pages are stored in level-specific directories (e.g., `storage_base_path/level_0/page_123.cjt`).
+* Directory structure:
 
-  // Or, if using net patches:
-  "net_patches": {
-    "objectA": { "field1": 123, "field2": "foo" },
-    "objectB": { "fieldX": true }
-  }
-}
-```
-
-Place this file under:
-
-```
-./journal/
-  level_N/
-    <path_based_on_window_start>/
-      <page_id>.json
-```
-
-* For N = 0 (e.g. minute‐level), `path_based_on_window_start = YYYY-MM-DD/HH-MM` (e.g. `2025-06-03/12-34.json`).
-* For N = 1 (hour), `YYYY-MM-DD/HH.json` (e.g. `2025-06-03/12.json`).
-* For N = 2 (day), `YYYY-MM-DD.json` (e.g. `2025-06-03.json`).
-* For N = 3 (month), `YYYY-MM.json` (e.g. `2025-06.json`).
-* …and so on, matching each level’s epoch granularity.
+  ```
+  ./journal/
+    level_0/
+      YYYY-MM-DD-HH-MM_pageID.cjt
+    level_1/
+      YYYY-MM-DD-HH_pageID.cjt
+    level_2/
+      YYYY-MM-DD_pageID.cjt
+    level_3/
+      YYYY-MM_pageID.cjt
+    …
+  ```
 
 ---
 
@@ -467,7 +491,7 @@ Retention runs as a background job (e.g. a weekly cron) that scans `./journal/le
 
 2. **Rollup Conditions (per Level N):**
 
-* **Size‐based:** `content.len() ≥ max_leaves_per_page[N]` → finalize (if nonempty).
+* **Size‐based:** `content.len() ≥ max_items_per_page[N]` → finalize (if nonempty).
 * **Age‐based:** `(trigger_ts – page.creation_timestamp) ≥ max_page_age_seconds[N]` → finalize (if nonempty).
 
 3. **Empty Page Discard:**

@@ -42,6 +42,7 @@ CivicJournal Time is a hierarchical Merkle-chained delta-log system designed for
           - Retrieves a specific `JournalLeaf` by its hash and provides a Merkle proof of its inclusion in its L0 page.
           - Relies on `StorageBackend::load_leaf_by_hash` to find the leaf (which scans L0 pages).
           - Dynamically reconstructs the Merkle tree for the identified L0 page to generate the proof.
+          - **Note**: Current implementations (or initial versions) might return a placeholder `JournalLeaf` (e.g., containing the correct `leaf_hash` but with dummy data for other fields) alongside the `MerkleProof`. Retrieving the full `JournalLeaf` data via `StorageBackend::load_leaf_by_hash` is a distinct operation that complements the proof generation.
         - **`reconstruct_container_state(container_id, at_timestamp)`**:
           - Rebuilds the state of a given `container_id` at a specific point in time.
           - Achieved by iterating through L0 pages, collecting relevant `JournalLeaf` entries for the container up to `at_timestamp`, and sequentially applying their `delta_payload`s.
@@ -95,14 +96,18 @@ src/
    - Includes metadata and payload
 
 2. **JournalPage**
-   - Groups multiple journal entries within a specific time window and hierarchy level.
-   - **Content Storage**: Stores its content in a `content: PageContent` field. `PageContent` is an enum:
-     - `PageContent::Leaves(Vec<JournalLeaf>)`: For Level 0 (L0) pages, stores a vector of full `JournalLeaf` objects.
-     - `PageContent::ThrallHashes(Vec<[u8; 32]>)`: For Level 1+ (L1+) pages, stores a vector of page hashes of its child (thrall) pages from the level below.
-   - The previous `content_hashes: Vec<PageContentHash>` field and the `PageContentHash` enum have been removed.
-   - **Integrity**: Maintains a Merkle root calculated over its `PageContent` (hashes of leaves for L0, or thrall page hashes for L1+).
-   - **Chaining**: Linked to the previous page in the same level via `prev_page_hash`.
-   - Handles roll-up to higher hierarchy levels when finalized.
+   - Represents a page in the time hierarchy, holding aggregated data for a specific time window and level.
+   - Its primary content is stored in the `content` field, which is of type `PageContent` (an enum):
+     - `PageContent::Leaves(Vec<JournalLeaf>)`: Typically used for Level 0 pages. Stores the actual `JournalLeaf` objects recorded within the page's time window.
+     - `PageContent::ThrallHashes(Vec<[u8; 32]>)`: Typically used for Level 1+ pages. Stores the page hashes of its finalized child pages. The nature of what these thrall hashes represent (e.g., direct aggregation of child Merkle roots, or roots of net-patch summaries) is determined by the `RollupContentType` defined in the `LevelRollupConfig` for the parent level.
+   - Contains `merkle_root`: The root hash of a Merkle tree constructed over its `PageContent` (e.g., over leaf hashes for L0, or over thrall page hashes for L1+).
+   - Is cryptographically linked to the previous page at the same hierarchical level via `prev_page_hash`.
+   - Has its own unique `page_hash`, derived from its key fields, ensuring its integrity.
+   - Manages its lifecycle including finalization (sealing) and participates in the roll-up process, where its summary (e.g., its `page_hash`) is incorporated into a parent page at the next higher level.
+   - **Persistence**: `JournalPage` instances are serialized using a format like Bincode (potentially with compression like Zstd, Lz4, or Snappy based on configuration) and stored as individual files. These files typically use a `.cjt` extension and begin with a 6-byte header:
+     - Bytes 0-3: Magic string `CJTP` (CivicJournal Time Page).
+     - Byte 4: Format version (e.g., `1`).
+     - Byte 5: Compression algorithm identifier (e.g., `0` for None, `1` for Zstd, corresponding to the `CompressionAlgorithm` enum).
 
 3. **TimeHierarchy**
    - Manages the 7-level time hierarchy
