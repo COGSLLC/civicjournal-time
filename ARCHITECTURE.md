@@ -1,5 +1,7 @@
 # CivicJournal Time - Architecture Document
 
+**Last Updated**: 2025-06-04
+
 ## Core Architecture
 
 ### Overview
@@ -9,27 +11,36 @@ CivicJournal Time is a hierarchical Merkle-chained delta-log system designed for
 ### Core Components
 
 1. **Time Hierarchy System**
-   - Manages time-based organization of journal entries
-   - Handles page creation, sealing, and roll-up
-   - Implements a hierarchical time-based storage model with 7 levels
+   - Manages time-based organization of journal entries across 7 levels (minutes to centuries)
+   - Handles page creation, sealing, and roll-up operations
+   - Implements configurable time windows for each level
+   - Enforces data retention policies and cleanup
 
 2. **Journal Management**
-   - Handles storage and retrieval of journal entries
-   - Manages page persistence and roll-up policies
-   - Implements Merkle tree for data integrity
+   - Manages the lifecycle of journal entries and pages
+   - Handles both synchronous and asynchronous operations
+   - Implements rollup policies based on size and age thresholds
+   - Provides backup and restore functionality
 
-3. **Configuration System**
-   - Comprehensive configuration via TOML files
-   - Supports flexible roll-up strategies:
-     - Time-based roll-up triggers
-     - Size-based roll-up thresholds
-     - Custom roll-up policies
-   - Configurable storage backends and retention policies
+3. **Storage System**
+   - Abstract `StorageBackend` trait for pluggable storage implementations
+   - Built-in implementations:
+     - `FileStorage`: Disk-based storage with configurable compression
+     - `MemoryStorage`: In-memory storage for testing and development
+   - Supports multiple compression algorithms (Zstd, Lz4, Snappy, None)
+   - Implements efficient page serialization/deserialization
 
-4. **Data Model**
-   - Delta-based change tracking with cryptographic chaining
-   - Merkle tree for data integrity
-   - Hierarchical page structure for efficient queries
+4. **Query Engine**
+   - Provides interfaces for data retrieval and verification
+   - Implements Merkle proofs for data integrity
+   - Supports state reconstruction and time-range queries
+   - Enables verification of page chain integrity
+
+5. **Configuration System**
+   - Comprehensive TOML-based configuration
+   - Environment variable overrides support
+   - Runtime configuration validation
+   - Sensible defaults with customization options
 
    5. **Query Engine (`src/query/`)**
       - **Objective**: Provides interfaces to retrieve data, verify integrity, and reconstruct state from the journal.
@@ -58,34 +69,40 @@ CivicJournal Time is a hierarchical Merkle-chained delta-log system designed for
 src/
 ├── config/           # Configuration management
 │   ├── mod.rs        # Configuration loading and validation
+│   ├── error.rs      # Configuration error handling
+│   ├── validation.rs # Configuration validation logic
 │   └── config.toml   # Default configuration
 ├── types/            # Core type definitions
 │   ├── mod.rs        # Type exports
-│   ├── time.rs       # Time-related types
-│   └── journal.rs    # Journal entry types
+│   ├── time.rs       # Time-related types and utilities
+│   └── journal.rs    # Journal entry and page types
 ├── core/             # Core functionality
-│   ├── hash.rs       # Hashing functionality
-│   ├── leaf.rs       # Leaf functionality
-│   ├── page.rs       # Page functionality
-│   └── merkle.rs     # Merkle tree types
+│   ├── mod.rs        # Core module exports
+│   ├── hash.rs       # Cryptographic hashing utilities
+│   ├── leaf.rs       # JournalLeaf implementation
+│   ├── page.rs       # JournalPage implementation
+│   └── merkle.rs     # Merkle tree implementation
 ├── storage/          # Storage backends
-│   ├── mod.rs        # Storage trait and implementations
-│   ├── memory.rs     # In-memory storage
-│   └── file.rs       # File system storage
+│   ├── mod.rs        # StorageBackend trait and implementations
+│   ├── memory.rs     # In-memory storage backend
+│   ├── file.rs       # File system storage backend
+│   └── error.rs      # Storage-related errors
 ├── time/             # Time hierarchy implementation
 │   ├── mod.rs        # Time hierarchy management
-│   ├── level.rs      # Time level definitions
-│   └── rollup.rs     # Roll-up logic
-├── query/            # Query engine and types
+│   ├── level.rs      # Time level definitions and utilities
+│   ├── rollup.rs     # Roll-up logic and policies
+│   └── manager.rs    # TimeHierarchyManager implementation
+├── query/            # Query engine
 │   ├── mod.rs        # Query module exports
 │   ├── engine.rs     # QueryEngine implementation
-│   └── types.rs      # Query-related type definitions
-├── api/              # Public API (e.g., HTTP endpoints, if separate from core query logic)
+│   └── types.rs      # Query-related types and results
+├── api/              # Public API
 │   ├── mod.rs        # Public interface
-└── ffi/              # Foreign Function Interface
-    ├── mod.rs        # FFI exports
-    ├── c/            # C bindings
-    └── wasm/         # WebAssembly bindings
+│   ├── sync.rs       # Synchronous API wrapper
+│   └── error.rs      # API error types
+└── utils/            # Utility modules
+    ├── compression/  # Compression algorithms
+    └── serialization/ # Serialization utilities
 ```
 
 ### Key Data Structures

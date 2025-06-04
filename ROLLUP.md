@@ -4,15 +4,15 @@
 
 ### 1. Overview & Purpose
 
-The rollup mechanism is responsible for grouping, aggregating, and hierarchically folding raw “leaf” events (deltas) into progressively coarser epochs (minutes → hours → days → …). Its goals are:
+The rollup mechanism is responsible for grouping, aggregating, and hierarchically folding raw “leaf” events (deltas) into progressively coarser epochs (e.g., minutes → hours → days → …). Its primary goals are:
 
-1. Ensure every raw change (leaf) is eventually committed into a Merkle‐rooted “page” at Level 0.
-2. Automatically aggregate Level N pages into Level N+1 when either:
-   • The number of items (size) in a page reaches a configured threshold, or
-   • The page’s age (as measured from its creation timestamp to the triggering leaf’s timestamp) exceeds a configured maximum.
-3. Discard any empty pages (pages that contain no content) to save storage.
-4. Propagate a “net patch” or page hash (plus window metadata) upward into the next level’s active page, recursively.
-5. Record, for each finalized page, the time window it covers, Merkle root (or net state map), and first/last child references to enable forward/backward reconstruction.
+1. **Immutable Storage**: Ensure every raw change (leaf) is committed into a Merkle-rooted “page” at Level 0.
+2. **Automatic Aggregation**: Aggregate Level N pages into Level N+1 when either:
+   - The number of items in a page reaches `max_items_per_page` threshold, or
+   - The page's age exceeds `max_page_age_seconds`
+3. **Efficient Storage**: Discard empty pages (pages with no content) to save storage.
+4. **Hierarchical Propagation**: Propagate page hashes or net patches upward into parent pages, maintaining cryptographic links.
+5. **Verifiable History**: Record time windows, Merkle roots, and references to enable forward/backward reconstruction and verification.
 
 ---
 
@@ -154,7 +154,9 @@ content_types = ["ChildHashes", "ChildHashes", "NetPatches", "NetPatches"] # Exa
 
 ---
 
-### 5. API Surface (Core Methods)
+## 5. API Surface (Core Methods)
+
+All core methods are implemented in `TimeHierarchyManager` and exposed through both synchronous and asynchronous APIs.
 
 1. **add\_leaf(leaf: \&JournalLeaf) → Result<(), CJError>**
 
@@ -483,7 +485,17 @@ Retention runs as a background job (e.g. a weekly cron) that scans `./journal/le
 
 ---
 
-### 12. Summary of Key Behaviors
+## 12. Current Implementation Status
+
+The rollup mechanism is fully implemented with the following characteristics:
+
+- **Page Storage**: Uses `.cjt` files with a 6-byte header (magic number, version, compression type).
+- **Compression**: Supports Zstd, Lz4, Snappy, or no compression (configurable).
+- **Content Types**: Supports both `ChildHashes` and `NetPatches` rollup strategies.
+- **Error Handling**: Comprehensive error handling for storage operations, including simulation of storage errors for testing.
+- **Testing**: Extensive test coverage for rollup scenarios, including edge cases and error conditions.
+
+## 13. Summary of Key Behaviors
 
 1. **Single Active Page per Level:**
 

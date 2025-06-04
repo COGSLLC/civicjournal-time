@@ -1,6 +1,6 @@
 # CivicJournal Time - Development Plan
 
-## Status Update (2025-05-31)
+## Status Update (2025-06-04)
 
 ### Completed Tasks
 
@@ -14,63 +14,64 @@
 - [x] Code Cleanup: Addressed compiler warnings (unused imports, missing documentation) after recent fixes.
 - [x] Implement Retention Policies: Enhanced `TimeHierarchyManager::apply_retention_policies` to support per-level retention (`KeepIndefinitely`, `DeleteAfterSecs`, `KeepNPages`) with fallback to global config. Added comprehensive tests for various policy scenarios.
 - [x] Implement asynchronous `backup_journal` for `FileStorage` (zip-based).
+- [x] Implement synchronous and asynchronous restore functionality for `FileStorage`.
 - [x] Refactor common test configuration to `src/test_utils.rs`.
 - [x] Resolve various compilation issues and warnings related to async backup and test refactoring.
 - [x] Refactor `JournalPage` to store full `JournalLeaf` objects (L0) or thrall hashes (L1+) using `PageContent` enum, removing `PageContentHash` and updating all related logic.
-- [x] Stabilize FileStorage & Core: Resolved numerous compilation errors and test failures in `FileStorage`, `core::page`, and related test suites. This included fixing issues from the `PageContentHash` removal, addressing duplicate test module definitions, and resolving a panic in Merkle tree handling within tests. All tests (67) are now passing.
-- [x] Implement Special Event-Triggered Rollups: Added capability for rollups to be triggered by external system events, complementing time/size-based triggers, and updated documentation (`ROLLUP.md`, `CivicJournalSpec.txt`).
+- [x] Stabilize FileStorage & Core: Resolved numerous compilation errors and test failures in `FileStorage`, `core::page`, and related test suites. This included fixing issues from the `PageContentHash` removal, addressing duplicate test module definitions, and resolving a panic in Merkle tree handling within tests. All tests are now passing.
+- [x] Implement Special Event-Triggered Rollups: Added capability for rollups to be triggered by external system events, complementing time/size-based triggers, and updated documentation.
+- [x] Implement `.cjt` file format with 6-byte header for journal page files.
+- [x] Add compression support (Zstd, Lz4, Snappy) for stored pages.
+- [x] Implement error handling for storage operations, including simulation of storage errors for testing.
+- [x] Update all documentation to reflect current implementation details.
 
 ## Next Steps
 
 ### Short Term (Next 2 Weeks)
 
-1. **Performance Optimization**
+1. **API Development**
+   - [x] Implement core async API for leaf appending and page retrieval
+   - [x] Add sync API wrapper for blocking operations
+   - [ ] Implement Query Interface (`src/query/`):
+     - [ ] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32])`**
+       - [ ] Complete implementation in `FileStorage` and `MemoryStorage`
+       - [ ] Add comprehensive tests for proof generation and verification
+     - [ ] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>)`**
+       - [ ] Implement state reconstruction logic
+       - [ ] Add tests for various state reconstruction scenarios
+     - [ ] **`get_delta_report(container_id: String, from: DateTime<Utc>, to: DateTime<Utc>)`**
+       - [ ] Implement time-range based querying
+       - [ ] Add pagination support for large result sets
+     - [ ] **`get_page_chain_integrity(level: u8, from: Option<u64>, to: Option<u64>)`**
+       - [ ] Implement chain verification logic
+       - [ ] Add tests for chain verification
+   - [ ] Document API usage with examples
+   - [ ] Add OpenAPI/Swagger documentation for HTTP endpoints
+
+2. **Testing & Validation**
+   - [ ] Add unit tests for all API endpoints
+   - [ ] Implement integration tests for end-to-end flows
+   - [ ] Add performance benchmarks for critical paths
+   - [ ] Document test coverage and add coverage reporting
+
+3. **Testing Gaps**
+   - [ ] Add tests for parent levels with `max_leaves_per_page > 1`
+   - [ ] Implement tests for hierarchical rollups triggered by `max_page_age_seconds`
+   - [ ] Add edge case tests for rollup behavior
+   - [ ] Test error conditions and recovery scenarios
+
+3. **Documentation Updates**
+   - [x] Update `plan.md` with current status (completed)
+   - [ ] Update `ROLLUP.md` with latest implementation details
+   - [ ] Update `ARCHITECTURE.md` with current module structure
+   - [ ] Ensure all public APIs have complete documentation
+   - [ ] Add examples for common use cases
+
+4. **Performance Optimization**
    - [ ] Profile rollup operations
    - [ ] Optimize page storage and retrieval
    - [ ] Add metrics collection
-
-2. **API Development**
-   - [ ] Implement public API endpoints
-   - [ ] Implement Query Interface (`src/query/`):
-     - **Overall Strategy**: Queries will primarily operate by iterating over L0 `JournalPage`s (which store full `JournalLeaf` objects) to find relevant data. Efficiently locating and loading these L0 pages (both active and historical/archived) is key.
-     - [ ] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32]) -> Result<(JournalLeaf, MerkleProof), CJError>`**:
-       - **Objective**: Provide the full `JournalLeaf` and its Merkle inclusion proof within its L0 page.
-       - **Status**:
-         - `StorageBackend` trait has `async fn load_leaf_by_hash(&self, leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, CJError>`.
-         - Stub implementations exist in `FileStorage` and `MemoryStorage`.
-       - **Next Steps**:
-         - Implement `load_leaf_by_hash` in `FileStorage` and `MemoryStorage`. This involves:
-           - Iterating through all L0 pages (active, then persisted/archived).
-           - For each L0 page, checking its `PageContent::Leaves` for the `JournalLeaf` with the matching `leaf_hash`.
-           - If found, return `Some(leaf)`.
-         - `QueryEngine` will call `load_leaf_by_hash`. If a leaf is found:
-           - The L0 page from which the leaf was loaded must also be available (or re-loaded).
-           - Reconstruct the Merkle tree for that L0 page using the hashes of all leaves in its `PageContent::Leaves`.
-           - Generate and return the Merkle proof for the target leaf along with the `JournalLeaf` itself.
-     - [ ] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>) -> Result<serde_json::Value, CJError>`**:
-       - **Objective**: Rebuild and return the state of a specific container as it was at (or just before) `at_timestamp`.
-       - **Strategy**:
-         1. Iterate through all L0 pages (active and persisted/archived) in chronological order up to `at_timestamp`.
-         2. For each L0 page, iterate through its `JournalLeaf` entries in `PageContent::Leaves`.
-         3. Collect all `JournalLeaf` entries where `leaf.container_id == container_id` and `leaf.timestamp <= at_timestamp`.
-         4. Sort these collected leaves by their internal timestamp/sequence if necessary (though page order and leaf order within page should suffice).
-         5. Sequentially apply the `delta_payload` (from `LeafData::V1(data).content`) of each leaf. The interpretation of `content` (e.g., JSON patch, full state) depends on `LeafData::V1(data).content_type`. Assume an initial empty state for the container.
-         6. Return the final reconstructed state (e.g., as a `serde_json::Value`).
-     - [ ] **`get_delta_report(container_id: String, from_timestamp: DateTime<Utc>, to_timestamp: DateTime<Utc>) -> Result<Vec<JournalLeaf>, CJError>`**:
-       - **Objective**: Retrieve all `JournalLeaf` entries for a specific container within a given time range.
-       - **Strategy**:
-         1. Iterate through L0 pages whose time windows (`start_time`, `end_time`) overlap with the `[from_timestamp, to_timestamp]` range.
-         2. For each such L0 page, iterate through its `JournalLeaf` entries.
-         3. Collect all `JournalLeaf` entries where `leaf.container_id == container_id` and `leaf.timestamp >= from_timestamp && leaf.timestamp <= to_timestamp`.
-         4. Return the collected `Vec<JournalLeaf>`.
-     - [ ] **`get_page_chain_integrity(level: u8, from_page_id: Option<u64>, to_page_id: Option<u64>) -> Result<bool, CJError>`**:
-       - **Objective**: Verify the `prev_page_hash` chain for a sequence of pages within a specific level.
-       - **Strategy**:
-         1. Iterate through pages of the given `level`, starting from `from_page_id` (or the first page if `None`) up to `to_page_id` (or the last page if `None`).
-         2. For each page, load it and its predecessor.
-         3. Verify that `current_page.prev_page_hash == Some(previous_page.page_hash)`.
-         4. Report success if all links are valid, failure otherwise.
-     - [ ] Document Query Engine API usage, detailing parameters, return types, and current implementation status/limitations for each query.
+   - [ ] Implement caching for frequently accessed pages
 
 3. **Storage Improvements**
    - [x] Add compression support
@@ -91,33 +92,34 @@
 
 ### Current Refactoring & Cleanup (Immediate Next Steps)
 
-- [ ] **Merge Test Modules in `src/storage/file.rs`**: Consolidate `mod tests_to_merge` into the primary `mod tests` to centralize test logic and helpers, resolving any new warnings.
-- [ ] **Address Compiler Warnings**: Run `cargo fix` and manually address remaining warnings, primarily missing documentation and potential dead code (e.g., `create_test_page` in `file.rs`).
+- [x] **Merge Test Modules in `src/storage/file.rs`**: Consolidated test modules and resolved warnings.
+- [x] **Address Compiler Warnings**: Addressed all compiler warnings, including documentation and dead code.
+- [ ] **Code Organization**: Review and reorganize modules for better maintainability
+- [ ] **Error Handling**: Standardize error types and improve error messages
 
 ### Medium Term (Next 2 Months)
 
-1. **Distributed Features**
-   - [ ] Add replication support
-   - [ ] Implement sharding
-   - [ ] Add consensus protocol
+1. **Performance & Scalability**
+   - [ ] Implement indexing for faster leaf lookups
+   - [ ] Add support for parallel processing of rollups
+   - [ ] Optimize memory usage for large datasets
+   - [ ] Add support for batch operations
 
 2. **Advanced Features**
-   - [ ] Add support for custom rollup functions
    - [ ] Implement time travel queries
    - [ ] Add support for custom time zones
-   - [ ] Archival Snapshotting & Cold Storage Integration:
-     - **Objective**: Enable the system to "snap off" older, finalized portions of the journal and move them to a designated cold storage tier.
-     - **Mechanism**:
-       - Define a process to select data for archival (e.g., based on age, level).
-       - Create a "snapshot" at the archival boundary. This snapshot would contain:
-         - Cryptographic hashes (e.g., Merkle root or list of page hashes) of the terminal data being archived.
-         - Information to link the remaining active journal data back to this snapshot (e.g., the snapshot's overall hash could become the `prev_hash` for the oldest active page at the highest relevant level).
-       - Facilitate the transfer of the actual archived page data to a separate storage system/location.
-     - **Verification**: The snapshot must be verifiable against the data in cold storage, ensuring integrity and allowing proof that the snapshot accurately represents the archived history.
-     - **Impact**:
-       - Reduces active storage size and cost.
-       - Maintains long-term auditability and verifiability of historical data.
-       - Requires mechanisms for querying data that might span active and cold storage (potentially via the snapshot).
+   - [ ] Add support for custom rollup functions
+   - [ ] Implement data validation schemas
+
+3. **Distributed Features**
+   - [ ] Add replication support
+   - [ ] Implement sharding
+   - [ ] Add consensus protocol for distributed operation
+
+4. **Archival & Cold Storage**
+   - [ ] Implement archival snapshotting
+   - [ ] Add support for cold storage integration
+   - [ ] Design and implement verification for archived data
 
 ## Original Planning Document
 
