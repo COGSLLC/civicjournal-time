@@ -1180,8 +1180,7 @@ mod tests_to_merge {
     
     use chrono::{DateTime, Utc};
     use tempfile::tempdir;
-    use crate::core::page::{JournalPage};
-    use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
+    use crate::core::page::{JournalPage, PageIdGenerator};
     
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
     use crate::types::time::{TimeLevel};
@@ -1248,9 +1247,7 @@ mod tests_to_merge {
 
     #[tokio::test]
     async fn test_store_and_load_page_with_zstd_compression() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let dir = tempdir().unwrap();
+                let dir = tempdir().unwrap();
         let compression_config = CompressionConfig {
             enabled: true,
             algorithm: CompressionAlgorithm::Zstd,
@@ -1280,9 +1277,7 @@ mod tests_to_merge {
 
     #[tokio::test]
     async fn test_store_and_load_page_with_lz4_compression() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let dir = tempdir().unwrap();
+                let dir = tempdir().unwrap();
         let compression_config = CompressionConfig {
             enabled: true,
             algorithm: CompressionAlgorithm::Lz4,
@@ -1311,9 +1306,7 @@ mod tests_to_merge {
 
     #[tokio::test]
     async fn test_store_and_load_page_with_snappy_compression() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let dir = tempdir().unwrap();
+                let dir = tempdir().unwrap();
         let compression_config = CompressionConfig {
             enabled: true,
             algorithm: CompressionAlgorithm::Snappy,
@@ -1342,9 +1335,7 @@ mod tests_to_merge {
 
     #[tokio::test]
     async fn test_store_and_load_page_with_compression_enabled_none_algorithm() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let dir = tempdir().unwrap();
+                let dir = tempdir().unwrap();
         let compression_config = CompressionConfig {
             enabled: true,
             algorithm: CompressionAlgorithm::None,
@@ -1373,9 +1364,7 @@ mod tests_to_merge {
 
     #[tokio::test]
     async fn test_store_and_load_page() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let dir = tempdir().unwrap();
+                let dir = tempdir().unwrap();
         let config = get_base_test_config();
         let storage = FileStorage::new(dir.path(), config.compression.clone()).await.unwrap();
         let now = Utc::now();
@@ -1408,9 +1397,7 @@ mod tests_to_merge {
 
     #[tokio::test]
     async fn test_page_exists() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let dir = tempdir().unwrap();
+                let dir = tempdir().unwrap();
         let config = get_base_test_config();
         let storage = FileStorage::new(dir.path(), config.compression.clone()).await.unwrap();
         let now = Utc::now();
@@ -1427,9 +1414,7 @@ mod tests_to_merge {
 
     #[tokio::test]
     async fn test_backup_journal() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-
+        
         // 1. Setup FileStorage
         let source_dir = tempdir().unwrap();
         let storage_config = CompressionConfig { // Use default (no compression) for simplicity

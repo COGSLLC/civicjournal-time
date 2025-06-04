@@ -1,8 +1,7 @@
 // New imports for integration test context
 use civicjournal_time::core::time_manager::TimeHierarchyManager;
 use civicjournal_time::storage::StorageBackend;
-use civicjournal_time::core::page::{JournalPage, PageContent, NEXT_PAGE_ID};
-use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids, acquire_test_mutex};
+use civicjournal_time::core::page::{JournalPage, PageContent, PageIdGenerator};
 use civicjournal_time::LevelRollupConfig;
 use civicjournal_time::storage::memory::MemoryStorage;
 use civicjournal_time::config::{
@@ -68,19 +67,17 @@ fn create_test_config(
 // Note: This directly creates a JournalPage. For manager tests, you'd typically add leaves.
 // However, for retention, we need to control page end_times precisely.
 fn create_retention_test_page(level: u8, page_id_offset: u64, time_window_start: DateTime<Utc>, config: &Config) -> JournalPage {
-    let original_next_id = NEXT_PAGE_ID.load(Ordering::SeqCst); // Adjusted path
-    NEXT_PAGE_ID.store(original_next_id + page_id_offset, Ordering::SeqCst); // Adjusted path
-    
-    let page = JournalPage::new(
+    let gen = PageIdGenerator::new();
+    for _ in 0..page_id_offset {
+        gen.next();
+    }
+    JournalPage::new_with_id(
+        gen.next(),
         level,
-        None, // prev_page_hash
-        time_window_start, // this determines end_time based on level duration
-        config
-    );
-    // Restore NEXT_PAGE_ID if other tests depend on its sequential flow without manual setting like this
-    // For isolated retention tests, this direct setting is fine if we reset_global_ids before each test block.
-    // Better: ensure reset_global_ids() is called before any page creation in a test.
-    page
+        None,
+        time_window_start,
+        config,
+    )
 }
 
 // Helper to create a TimeHierarchyManager with MemoryStorage
@@ -94,9 +91,7 @@ fn create_test_manager() -> (TimeHierarchyManager, Arc<MemoryStorage>) {
 
 #[tokio::test]
 async fn test_add_leaf_to_new_page_and_check_active() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let (manager, storage) = create_test_manager(); // Config from create_test_manager implies mlpp=1 for L0 & L1
     let now = Utc::now();
 
@@ -224,9 +219,7 @@ async fn test_add_leaf_to_new_page_and_check_active() {
 
 #[tokio::test]
 async fn test_single_rollup_max_items() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let (manager, storage) = create_test_manager(); // Config from create_test_manager: L0 (1s, mlpp=1), L1 (60s, mlpp=1), no L2.
     let timestamp1 = Utc::now();
 
@@ -405,9 +398,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
 
 #[tokio::test]
 async fn test_cascading_rollup_max_items() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await; // Changed to .await for Tokio Mutex
-    reset_global_ids();
-
+    
     let (manager, storage) = create_cascading_test_config_and_manager();
     let timestamp = Utc::now();
 
@@ -479,9 +470,7 @@ async fn test_cascading_rollup_max_items() {
 
 #[tokio::test]
 async fn test_retention_disabled() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let config = Arc::new(create_test_config(false, 60, None, None)); // Retention disabled, 60s period (irrelevant)
     let storage = Arc::new(MemoryStorage::new());
     let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
@@ -501,9 +490,7 @@ async fn test_retention_disabled() {
 
 #[tokio::test]
 async fn test_retention_period_zero() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     // Retention enabled, but period is 0 seconds
     let config = Arc::new(create_test_config(true, 0, None, None)); 
     let storage = Arc::new(MemoryStorage::new());
@@ -524,9 +511,7 @@ async fn test_retention_period_zero() {
 
 #[tokio::test]
 async fn test_retention_no_pages_old_enough() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let retention_period_seconds = 60;
     let config = Arc::new(create_test_config(true, retention_period_seconds, None, None)); 
     let storage = Arc::new(MemoryStorage::new());
@@ -547,9 +532,7 @@ async fn test_retention_no_pages_old_enough() {
 
 #[tokio::test]
 async fn test_retention_some_pages_deleted() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let retention_period_seconds = 60;
     let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
     let storage = Arc::new(MemoryStorage::new());
@@ -580,9 +563,7 @@ async fn test_retention_some_pages_deleted() {
 
 #[tokio::test]
 async fn test_retention_all_pages_deleted() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let retention_period_seconds = 60;
     let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
     let storage = Arc::new(MemoryStorage::new());
@@ -610,9 +591,7 @@ async fn test_retention_all_pages_deleted() {
 
 #[tokio::test]
 async fn test_retention_multi_level() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let retention_period_seconds = 60;
     // Config has 2 levels by default from create_test_config: L0 (1s), L1 (60s)
     let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
@@ -653,9 +632,7 @@ async fn test_retention_multi_level() {
 
 #[tokio::test]
 async fn test_retention_l0_keep_n_pages() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let keep_n = 2;
     let config = Arc::new(create_test_config(
         true, 
@@ -697,9 +674,7 @@ async fn test_retention_l0_keep_n_pages() {
 
 #[tokio::test]
 async fn test_retention_l0_keep_n_pages_zero() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let config = Arc::new(create_test_config(
         true, 
         60,   
@@ -730,9 +705,7 @@ async fn test_retention_l0_keep_n_pages_zero() {
 
 #[tokio::test]
 async fn test_retention_mixed_policies_l0_keep_n_l1_delete_after_secs() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
+    
     let l0_keep_n = 1;
     let l1_delete_after_secs = 30u64;
 
@@ -833,9 +806,7 @@ fn create_age_based_rollup_config_and_manager(
 async fn test_age_based_rollup_cascade() {
     let test_body = async {
         println!("[TEST-DEBUG] Starting test_age_based_rollup_cascade");
-        let _guard = acquire_test_mutex("test_age_based_rollup_cascade").await;
-        reset_global_ids();
-
+        
         println!("[TEST-DEBUG] Setting up config with l0_max_age={}, l1_max_age={}", 2, 4);
         let l0_max_age = 2; 
         let l1_max_age = 4; 

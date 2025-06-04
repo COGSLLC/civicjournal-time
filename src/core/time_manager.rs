@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use crate::config::Config;
 use crate::storage::StorageBackend;
 use crate::core::leaf::JournalLeaf;
-use crate::core::page::{JournalPage, PageContent};
+use crate::core::page::{JournalPage, PageContent, PageIdGenerator};
 use crate::error::CJError;
 use crate::types::time::{RollupContentType, RollupRetentionPolicy, LevelRollupConfig};
 
@@ -26,6 +26,7 @@ use crate::types::time::{RollupContentType, RollupRetentionPolicy, LevelRollupCo
 pub struct TimeHierarchyManager {
     config: Arc<Config>,
     storage: Arc<dyn StorageBackend>,
+    page_id_gen: PageIdGenerator,
     /// Stores the currently active (open for writing) page for each level.
     /// Key: level (u8), Value: JournalPage
     /// This helps avoid repeatedly loading the same page from storage if many leaves
@@ -55,6 +56,7 @@ impl TimeHierarchyManager {
         TimeHierarchyManager {
             config,
             storage,
+            page_id_gen: PageIdGenerator::new(),
             active_pages: Arc::new(Mutex::new(HashMap::new())),
             last_finalized_page_ids: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             last_finalized_page_hashes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -186,11 +188,12 @@ impl TimeHierarchyManager {
             }
         }
 
-        let new_page = JournalPage::new(
-            level_idx as u8, // The level of the new page
-            prev_hash_for_new_page_opt, // This is already Option<[u8; 32]>
-            window_start, // time_window_start for the new page should be the calculated window_start
-            &self.config, // Pass the main config
+        let new_page = JournalPage::new_with_id(
+            self.page_id_gen.next(),
+            level_idx as u8,
+            prev_hash_for_new_page_opt,
+            window_start,
+            &self.config,
         );
         println!("[GOCAPL] Proceeding to create new page L{}P{}.", new_page.level, new_page.page_id);
         println!("[GOCAPL] New page creation timestamp: {}", new_page.creation_timestamp);
@@ -246,9 +249,10 @@ impl TimeHierarchyManager {
             }
         }
         
-        let new_page = JournalPage::new(
+        let new_page = JournalPage::new_with_id(
+            self.page_id_gen.next(),
             parent_level_idx,
-            potential_prev_page_hash, 
+            potential_prev_page_hash,
             window_start,
             &self.config,
         );
@@ -760,19 +764,17 @@ mod tests {
     // Note: This directly creates a JournalPage. For manager tests, you'd typically add leaves.
     // However, for retention, we need to control page end_times precisely.
     fn create_retention_test_page(level: u8, page_id_offset: u64, time_window_start: DateTime<Utc>, config: &Config) -> JournalPage {
-        let original_next_id = crate::core::page::NEXT_PAGE_ID.load(Ordering::SeqCst);
-        crate::core::page::NEXT_PAGE_ID.store(original_next_id + page_id_offset, Ordering::SeqCst);
-        
-        let page = JournalPage::new(
+        let gen = PageIdGenerator::new();
+        for _ in 0..page_id_offset {
+            gen.next();
+        }
+        JournalPage::new_with_id(
+            gen.next(),
             level,
-            None, // prev_page_hash
-            time_window_start, // this determines end_time based on level duration
-            config
-        );
-        // Restore NEXT_PAGE_ID if other tests depend on its sequential flow without manual setting like this
-        // For isolated retention tests, this direct setting is fine if we reset_global_ids before each test block.
-        // Better: ensure reset_global_ids() is called before any page creation in a test.
-        page
+            None,
+            time_window_start,
+            config,
+        )
     }
 
     // Helper to create a config for testing, allowing retention customization
@@ -1618,9 +1620,18 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         match stored_l1p1.content {
             PageContent::ThrallHashes(hashes) => {
                 assert_eq!(hashes.len(), 1, "L1P1 should contain one thrall hash from L0P0");
-                // Load L0P0 (which was stored much earlier) to get its Merkle root for comparison.
-                let l0p0_finalized = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should still be stored");
-                assert_eq!(hashes[0], l0p0_finalized.merkle_root, "L1P1 thrall hash should match L0P0's Merkle root");
+                // Load L0P0 (which was stored much earlier) to get its page hash for comparison.
+                // Thrall hashes store the finalized child page's page hash, not the Merkle root.
+                let l0p0_finalized = storage
+                    .load_page(0, 0)
+                    .await
+                    .unwrap()
+                    .expect("L0P0 (ID 0) should still be stored");
+                assert_eq!(
+                    hashes[0],
+                    l0p0_finalized.page_hash,
+                    "L1P1 thrall hash should match L0P0's page hash"
+                );
             }
             _ => panic!("L1P1 content should be ThrallHashes"),
         }
