@@ -325,7 +325,7 @@ mod tests {
 
     // Removed local PAGE_TEST_MUTEX, lazy_static, and unused Mutex/Ordering imports
 
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, RollupConfig}; // Renamed to avoid conflict
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, LevelRollupConfig}; // Renamed to avoid conflict
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
 
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
@@ -336,19 +336,19 @@ mod tests {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
                     TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
                     TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
-            rollup: Default::default(),
             storage: StorageConfig { storage_type: StorageType::Memory, base_path: "./cjtmp_page_test".to_string(), max_open_files: 100 },
             compression: CompressionConfig::default(),
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            force_rollup_on_shutdown: false,
         }
     }
 

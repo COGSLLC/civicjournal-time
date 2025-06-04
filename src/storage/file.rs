@@ -1188,7 +1188,7 @@ mod tests_to_merge {
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
     
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
-    use crate::types::time::{RollupConfig, TimeLevel};
+    use crate::types::time::{LevelRollupConfig, TimeLevel};
     use crate::{StorageType, TimeHierarchyConfig, CompressionAlgorithm};
     use std::fs::File as StdFile; // For opening the backup zip file
 
@@ -1197,20 +1197,20 @@ mod tests_to_merge {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
                     TimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
                     TimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
-            rollup: Default::default(),
             // For file storage tests, we might still use Memory for config simplicity unless test needs file specifics
-            storage: StorageConfig { storage_type: StorageType::Memory, base_path: "./cjtmp_file_test".to_string(), max_open_files: 100 }, 
+            storage: StorageConfig { storage_type: StorageType::Memory, base_path: "./cjtmp_file_test".to_string(), max_open_files: 100 },
             compression: CompressionConfig::default(),
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            force_rollup_on_shutdown: false,
         }
     }
 

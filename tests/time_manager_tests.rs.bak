@@ -4,8 +4,8 @@ use civicjournal_time::core::page::{JournalPage, PageContent, NEXT_PAGE_ID};
 use civicjournal_time::core::{SHARED_TEST_ID_MUTEX, reset_global_ids};
 use civicjournal_time::storage::memory::MemoryStorage;
 use civicjournal_time::config::{
-    Config, RetentionConfig, StorageConfig as TestStorageConfig, CompressionConfig, 
-    LoggingConfig, MetricsConfig, TimeHierarchyConfig, TimeLevel, RollupConfig, RollupRetentionPolicy
+    Config, RetentionConfig, StorageConfig as TestStorageConfig, CompressionConfig,
+    LoggingConfig, MetricsConfig, TimeHierarchyConfig, TimeLevel, LevelRollupConfig, RollupRetentionPolicy
 };
 use civicjournal_time::StorageType as TestStorageType;
 use civicjournal_time::CompressionAlgorithm;
@@ -29,20 +29,20 @@ fn create_test_config(
         time_hierarchy: TimeHierarchyConfig {
             levels: vec![
                 TimeLevel {
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 1,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 1,
                         max_page_age_seconds: 1000, // Match global test default
-                        force_rollup_on_shutdown: false,
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: l0_policy,
                     name: "seconds".to_string(),
                     duration_seconds: 1
                 },
                 TimeLevel {
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 1,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 1,
                         max_page_age_seconds: 1000, // Match global test default
-                        force_rollup_on_shutdown: false,
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: l1_policy,
                     name: "minutes".to_string(),
@@ -50,11 +50,7 @@ fn create_test_config(
                 },
             ],
         },
-        rollup: RollupConfig { // Sensible defaults for most tests
-            max_leaves_per_page: 1, // Corrected back to 1 for test consistency
-            max_page_age_seconds: 1000,
-            force_rollup_on_shutdown: false,
-        },
+        force_rollup_on_shutdown: false,
         storage: Default::default(), // Assuming TestStorageConfig will be used or it's okay
         retention: RetentionConfig {
             enabled: retention_enabled,
@@ -365,33 +361,29 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         time_hierarchy: TimeHierarchyConfig {
             levels: vec![
                 TimeLevel {
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 1,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 1,
                         max_page_age_seconds: 1000,
-                        force_rollup_on_shutdown: false,
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: None, name: "L0".to_string(), duration_seconds: 1 },
                 TimeLevel {
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 1,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 1,
                         max_page_age_seconds: 1000,
-                        force_rollup_on_shutdown: false,
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: None, name: "L1".to_string(), duration_seconds: 1 },
                 TimeLevel {
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 1,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 1,
                         max_page_age_seconds: 1000,
-                        force_rollup_on_shutdown: false,
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: None, name: "L2".to_string(), duration_seconds: 1 },
             ],
         },
-        rollup: RollupConfig {
-            max_leaves_per_page: 1, // This is key for cascading by item count
-            max_page_age_seconds: 1000, // Large age so it doesn't interfere with item count based finalization
-            force_rollup_on_shutdown: false,
-        },
+        force_rollup_on_shutdown: false,
         storage: Default::default(),
         retention: RetentionConfig { // Default retention disabled for these rollup tests
             enabled: false,
@@ -794,31 +786,27 @@ fn create_age_based_rollup_config_and_manager(
             levels: vec![
                 TimeLevel { // Level 0
                     name: "L0_age_test".to_string(),
-                    duration_seconds: 60, 
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: l0_max_leaves as usize,
+                    duration_seconds: 60,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: l0_max_leaves as usize,
                         max_page_age_seconds: l0_max_age_secs,
-                        force_rollup_on_shutdown: false,
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: None,
                 },
                 TimeLevel { // Level 1
                     name: "L1_age_test".to_string(),
-                    duration_seconds: 3600, 
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: l1_max_leaves as usize,
+                    duration_seconds: 3600,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: l1_max_leaves as usize,
                         max_page_age_seconds: l1_max_age_secs,
-                        force_rollup_on_shutdown: false,
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: None,
                 },
             ],
         },
-        rollup: RollupConfig { 
-            max_leaves_per_page: 1000, 
-            max_page_age_seconds: 3600 * 24, 
-            force_rollup_on_shutdown: false,
-        },
+        force_rollup_on_shutdown: false,
         storage: TestStorageConfig {
             storage_type: TestStorageType::Memory,
             base_path: "".to_string(),
@@ -838,17 +826,3 @@ fn create_age_based_rollup_config_and_manager(
     let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
     (manager, storage)
 }
-
-#[tokio::test]
-async fn test_age_based_rollup_cascade() {
-    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-    reset_global_ids();
-
-    let l0_max_age = 2; 
-    let l1_max_age = 4; 
-    let (manager, storage) = create_age_based_rollup_config_and_manager(l0_max_age, 100, l1_max_age, 100);
-
-    let initial_time = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(); 
-
-    let leaf1_ts = initial_time;
-    let leaf1 = JournalLeaf::new(leaf1_ts, None

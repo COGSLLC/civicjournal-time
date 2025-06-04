@@ -3,7 +3,7 @@
 #![cfg(test)] // Ensure this module is only compiled for tests
 
 use crate::config::Config;
-use crate::{RollupConfig, StorageType, TimeLevel};
+use crate::{LevelRollupConfig, StorageType, TimeLevel};
 use std::sync::OnceLock;
 
 /// Provides a common test configuration.
@@ -17,13 +17,14 @@ pub fn get_test_config() -> &'static Config {
         config.time_hierarchy.levels = vec![TimeLevel {
             name: "L0_test_default".to_string(), // Generic name for test config
             duration_seconds: 60,
-            rollup_config: RollupConfig {
-                max_leaves_per_page: 10,
+            rollup_config: LevelRollupConfig {
+                max_items_per_page: 10,
                 max_page_age_seconds: 300,
-                force_rollup_on_shutdown: false,
+                ..LevelRollupConfig::default()
             },
             retention_policy: None,
         }];
+        config.force_rollup_on_shutdown = false;
         config
     })
 }

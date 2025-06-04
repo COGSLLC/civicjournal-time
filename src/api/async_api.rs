@@ -108,7 +108,7 @@ mod tests {
     use super::*;
     use crate::config::Config; // Ensure Config is imported for get_rollup_test_config
     use crate::test_utils::get_test_config; // Use the shared test config
-    use crate::types::time::RollupConfig;
+    use crate::types::time::LevelRollupConfig;
     use crate::StorageType;
     use crate::TimeLevel;
     use std::sync::OnceLock;
@@ -129,20 +129,20 @@ mod tests {
                 TimeLevel { // L0
                     name: "L0_rollup_test".to_string(),
                     duration_seconds: 60,
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 2, 
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 2,
                         max_page_age_seconds: 300,
-                        force_rollup_on_shutdown: false
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: None,
                 },
                 TimeLevel { // L1
                     name: "L1_rollup_test".to_string(),
                     duration_seconds: 300,
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 10, 
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 10,
                         max_page_age_seconds: 86400,
-                        force_rollup_on_shutdown: false
+                        ..LevelRollupConfig::default()
                     },
                     retention_policy: None,
                 }

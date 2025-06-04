@@ -450,14 +450,14 @@ mod tests {
     use crate::config::{
         CompressionConfig, RetentionConfig, StorageConfig,
     };
-    use crate::types::{CompressionAlgorithm, TimeLevel}; // Import the TimeLevel STRUCT and CompressionAlgorithm
+    use crate::types::{CompressionAlgorithm, TimeLevel, LevelRollupConfig}; // Import the TimeLevel STRUCT and CompressionAlgorithm
 
     #[test]
     fn test_validate_time_hierarchy() {
         // Valid hierarchy
         let valid = TimeHierarchyConfig {
             levels: vec![TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                 name: "test".to_string(),
                 duration_seconds: 60,
@@ -473,13 +473,13 @@ mod tests {
         let duplicate = TimeHierarchyConfig {
             levels: vec![
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "test".to_string(),
                     duration_seconds: 60,
                 },
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "test".to_string(),
                     duration_seconds: 3600,
@@ -492,13 +492,13 @@ mod tests {
         let bad_order = TimeHierarchyConfig {
             levels: vec![
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "hour".to_string(),
                     duration_seconds: 3600,
                 },
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "minute".to_string(),
                     duration_seconds: 60,

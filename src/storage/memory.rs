@@ -187,7 +187,7 @@ mod tests {
     use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
     use crate::{core::leaf::JournalLeaf, StorageType, core::page::PageContent};
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, RollupConfig};
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, LevelRollupConfig};
     use crate::core::leaf::{LeafData, LeafDataV1}; // Added missing imports
 
     fn get_test_config() -> Config {
@@ -195,19 +195,19 @@ mod tests {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
                     TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
                     TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
-            rollup: Default::default(),
             storage: StorageConfig { storage_type: StorageType::Memory, base_path: "./cjtmp_mem_test".to_string(), max_open_files: 100 },
             compression: CompressionConfig::default(),
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            force_rollup_on_shutdown: false,
         }
     }
 
