@@ -660,27 +660,69 @@ pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
     } else { // Page is NOT empty
         if is_full_by_items || is_over_age {
             // NORMAL FINALIZATION (not empty, AND (full or over age)):
-            println!("[Rollup] Finalizing non-empty page L{}/{} (Full: {}, OverAge: {}). Original trigger: {:?}", 
-                parent_level_idx, parent_page.page_id, is_full_by_items, is_over_age, original_trigger_timestamp);
-            let parent_page_to_store = parent_page.clone(); 
-            
-            println!("[ROLLUP-DEBUG] STORING PAGE L{}P{} to storage", parent_level_idx, parent_page_to_store.page_id);
-            self.storage.store_page(&parent_page_to_store).await?;
-            println!("[ROLLUP-DEBUG] Page L{}P{} stored successfully", parent_level_idx, parent_page_to_store.page_id);
-            
-            self.last_finalized_page_ids.lock().await.insert(parent_level_idx, parent_page_to_store.page_id);
-            self.last_finalized_page_hashes.lock().await.insert(parent_level_idx, parent_page_to_store.page_hash);
-            
-            println!("[ROLLUP-DEBUG] Removing L{}P{} from active_pages before cascade", parent_level_idx, parent_page_to_store.page_id);
+            println!(
+                "[Rollup] Finalizing non-empty page L{}/{} (Full: {}, OverAge: {}). Original trigger: {:?}",
+                parent_level_idx,
+                parent_page.page_id,
+                is_full_by_items,
+                is_over_age,
+                original_trigger_timestamp
+            );
+            let parent_page_to_store = parent_page.clone();
+
+            println!(
+                "[ROLLUP-DEBUG] Removing L{}P{} from active_pages before cascade",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
             active_pages_guard.remove(&parent_level_idx); // Remove from active as it's now finalized
-            println!("[ROLLUP-DEBUG] L{}P{} removed from active_pages successfully (under lock).", parent_level_idx, parent_page_to_store.page_id);
-            
-            // Recursive call for the next level up
-            drop(active_pages_guard); // Release lock before recursive await
-            println!("[ROLLUP-DEBUG] Starting recursive rollup call to L{} with parent hash {:.8}", 
-                parent_level_idx + 1, 
-                parent_page_to_store.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>());
-            Box::pin(self.perform_rollup(parent_level_idx, parent_page_to_store.page_hash, original_trigger_timestamp)).await?;
+            println!(
+                "[ROLLUP-DEBUG] L{}P{} removed from active_pages successfully (under lock).",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
+            drop(active_pages_guard); // Release lock before awaiting storage
+
+            println!(
+                "[ROLLUP-DEBUG] STORING PAGE L{}P{} to storage",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
+            self.storage.store_page(&parent_page_to_store).await?;
+            println!(
+                "[ROLLUP-DEBUG] Page L{}P{} stored successfully",
+                parent_level_idx,
+                parent_page_to_store.page_id
+            );
+
+            self
+                .last_finalized_page_ids
+                .lock()
+                .await
+                .insert(parent_level_idx, parent_page_to_store.page_id);
+            self
+                .last_finalized_page_hashes
+                .lock()
+                .await
+                .insert(parent_level_idx, parent_page_to_store.page_hash);
+
+            println!(
+                "[ROLLUP-DEBUG] Starting recursive rollup call to L{} with parent hash {:.8}",
+                parent_level_idx + 1,
+                parent_page_to_store
+                    .page_hash
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>()
+            );
+            Box::pin(
+                self.perform_rollup(
+                    parent_level_idx,
+                    parent_page_to_store.page_hash,
+                    original_trigger_timestamp,
+                )
+            )
+            .await?;
             println!("[ROLLUP-DEBUG] Returned from recursive rollup call to L{}", parent_level_idx + 1);
         } else {
             // Page is NOT empty, NOT full, and NOT over age. Keep it active.
