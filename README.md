@@ -4,6 +4,8 @@
 
 CivicJournal-Time is a Rust-based system designed to create immutable, chronologically-ordered logs of events or data changes. It's particularly well-suited for tracking the history of external systems, providing a secure and verifiable audit trail that allows for state reconstruction, data integrity verification, and detailed auditing.
 
+⚠︎ ALPHA (v0.0.24) — minute-level roll-ups work, hour/day under active refactor.
+
 ## Core Concepts
 
 At its heart, CivicJournal-Time organizes data into a hierarchical structure, ensuring both efficiency and verifiability:
@@ -129,4 +131,4 @@ Contributions are welcome! Please follow these general guidelines:
 
 ## License
 
-This project is licensed under the [Specify License Here - e.g., MIT License or Apache 2.0]. See the `LICENSE` file for details.
+This project is licensed under the AGPL-3.0 for open-source use; contact about commercial licensing See the `LICENSE` file for details.
