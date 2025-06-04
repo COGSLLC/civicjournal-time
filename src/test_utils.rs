@@ -1,3 +1,12 @@
+//! Test utilities for the CivicJournal time-series database.
+//!
+//! This module provides shared test helpers, fixtures, and utilities
+//! to simplify writing tests across the codebase. It includes:
+//! - Common test configurations
+//! - Test ID generation
+//! - Test synchronization primitives
+//! - Global test state management
+
 // src/test_utils.rs
 
 use crate::config::Config;
@@ -53,12 +62,44 @@ pub async fn acquire_test_mutex(test_name: &str) -> tokio::sync::MutexGuard<'sta
 }
 
 lazy_static! {
+    /// A global mutex used to synchronize test execution.
+    ///
+    /// This mutex ensures that tests that modify global state or shared resources
+    /// run sequentially, preventing race conditions and test interference.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use civicjournal_time::test_utils::SHARED_TEST_ID_MUTEX;
+    ///
+    /// #[tokio::test]
+    /// async fn test_example() {
+    ///     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    ///     // Test code that needs exclusive access to shared resources
+    /// }
+    /// ```
     pub static ref SHARED_TEST_ID_MUTEX: Mutex<()> = {
         println!("[TEST-DEBUG] Initializing SHARED_TEST_ID_MUTEX");
         Mutex::new(())
     };
 }
 
+/// Resets global counters used in tests to their initial state.
+///
+/// This function should be called at the beginning of each test that relies on
+/// deterministic ID generation. It resets:
+/// - The global page ID counter
+/// - The global leaf ID counter
+///
+/// # Examples
+/// ```
+/// use civicjournal_time::test_utils::reset_global_ids;
+///
+/// #[test]
+/// fn test_something() {
+///     reset_global_ids();
+///     // Test code that depends on ID generation
+/// }
+/// ```
 pub fn reset_global_ids() {
     // These paths assume NEXT_PAGE_ID is pub(crate) in crate::core::page
     // and NEXT_LEAF_ID is pub(crate) in crate::core::leaf

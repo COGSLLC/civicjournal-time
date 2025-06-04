@@ -14,7 +14,6 @@ use super::{
 use crate::error::CJError;
 use super::error::ConfigError; // For return types in validation functions
 use crate::StorageType;      // For StorageType enum used in tests
-use crate::LevelRollupConfig;
 
 /// Validates the application configuration.
 ///

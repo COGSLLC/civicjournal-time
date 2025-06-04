@@ -80,20 +80,37 @@ impl JournalLeaf {
     // TODO: Implement validation methods if needed
 }
 
-/// Represents the actual data payload for a leaf, versioned.
+/// Represents the actual data payload for a leaf, versioned to allow for future schema evolution.
+/// 
+/// The versioning allows the system to evolve the leaf data format while maintaining
+/// backward compatibility. Each variant represents a different version of the leaf data format.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum LeafData {
+    /// Version 1 of the leaf data format.
     V1(LeafDataV1),
 }
 
-/// Version 1 of the leaf data payload.
+/// Version 1 of the leaf data payload structure.
+/// 
+/// This structure represents the data payload for a leaf node in version 1 of the format.
+/// It includes metadata about the content, the content itself, and a signature for verification.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LeafDataV1 {
-    pub timestamp: DateTime<Utc>,      // Timestamp of the data content itself
-    pub content_type: String,        // e.g., "text/plain", "application/json-patch+json"
-    pub content: Vec<u8>,            // The actual data
-    pub author: String,              // Identifier for the author/source of this specific data
-    pub signature: String,           // Cryptographic signature of the content by the author
+    /// The exact time when the data was created or the event occurred.
+    pub timestamp: DateTime<Utc>,
+    
+    /// The MIME type of the content, e.g., "text/plain" or "application/json-patch+json".
+    pub content_type: String,
+    
+    /// The actual content data as raw bytes.
+    pub content: Vec<u8>,
+    
+    /// Unique identifier of the entity that created or is responsible for this data.
+    pub author: String,
+    
+    /// Cryptographic signature of the content, created by the author's private key.
+    /// This allows verification of content authenticity and integrity.
+    pub signature: String,
 }
 
 #[cfg(test)]

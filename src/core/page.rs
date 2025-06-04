@@ -17,19 +17,43 @@ pub type MerkleRoot = [u8; 32];
 /// Public for testing purposes to allow resetting the counter.
 pub static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Helper for tests or multiple manager instances to generate page IDs
-/// independently. `TimeHierarchyManager` uses its own counter so tests can
-/// run concurrently without interfering with each other.
+/// A thread-safe generator for unique page IDs.
+///
+/// This struct provides a way to generate unique, monotonically increasing
+/// page IDs in a thread-safe manner. Each instance maintains its own counter,
+/// allowing different components to generate IDs independently without
+/// interference.
+///
+/// # Examples
+/// ```
+/// use civicjournal_time::core::page::PageIdGenerator;
+///
+/// let id_gen = PageIdGenerator::new();
+/// let id1 = id_gen.next();  // 0
+/// let id2 = id_gen.next();  // 1
+/// ```
 #[derive(Debug)]
 pub struct PageIdGenerator {
+    /// The internal counter for generating unique IDs
     counter: AtomicU64,
 }
 
 impl PageIdGenerator {
+    /// Creates a new `PageIdGenerator` with an initial counter value of 0.
+    ///
+    /// # Returns
+    /// A new instance of `PageIdGenerator`
     pub fn new() -> Self {
         Self { counter: AtomicU64::new(0) }
     }
 
+    /// Generates and returns the next unique page ID.
+    ///
+    /// This method is thread-safe and can be called from multiple threads
+    /// without additional synchronization.
+    ///
+    /// # Returns
+    /// A new, unique page ID as a `u64`
     pub fn next(&self) -> u64 {
         self.counter.fetch_add(1, Ordering::SeqCst)
     }
@@ -38,29 +62,48 @@ impl PageIdGenerator {
 
 use std::collections::HashMap;
 
+/// Represents the different types of content that can be stored in a JournalPage.
+/// 
+/// The content type varies based on the page level and rollup configuration.
+/// This enum ensures type safety when working with different page content formats.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum PageContent {
+    /// Contains raw journal leaves (level 0 pages only).
+    /// Each leaf represents an individual change or event.
     Leaves(Vec<JournalLeaf>),
+    
+    /// Contains hashes of child pages (for non-leaf levels).
+    /// Used when RollupContentType::ChildHashes is specified.
     ThrallHashes(Vec<[u8; 32]>),
-    NetPatches(HashMap<String, HashMap<String, serde_json::Value>>), // ObjectID -> FieldName -> Value
+    
+    /// Contains net patches representing state changes (for non-leaf levels).
+    /// Used when RollupContentType::NetPatches is specified.
+    /// Structured as ObjectID -> FieldName -> NewValue
+    NetPatches(HashMap<String, HashMap<String, serde_json::Value>>),
 }
 
 
 /// A summary of a JournalPage, used for lightweight listings, e.g., for retention policies.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JournalPageSummary {
-    /// TODO: Document this field
+    /// Unique identifier for this page within its level.
     pub page_id: u64,
-    /// TODO: Document this field
+    
+    /// The hierarchical level of this page (0 = leaves, 1+ = rollup levels).
     pub level: u8,
-    /// TODO: Document this field
-    pub creation_timestamp: DateTime<Utc>, // Changed from start_time to match JournalPage
-    /// TODO: Document this field
+    
+    /// When this page was created and its time window begins (inclusive).
+    pub creation_timestamp: DateTime<Utc>,
+    
+    /// The end of this page's time window (exclusive).
     pub end_time: DateTime<Utc>,
-    /// TODO: Document this field
+    
+    /// Cryptographic hash of this page's content and metadata.
+    /// Used for integrity verification and chaining between pages.
     pub page_hash: [u8; 32],
     // Consider adding num_items if useful for retention logic without loading full page
-    // pub num_items: usize, 
+    // pub num_items: usize, // Number of items (leaves or thralls) in this page
+    
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

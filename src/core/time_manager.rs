@@ -10,7 +10,7 @@ use crate::storage::StorageBackend;
 use crate::core::leaf::JournalLeaf;
 use crate::core::page::{JournalPage, PageContent, PageIdGenerator};
 use crate::error::CJError;
-use crate::types::time::{RollupContentType, RollupRetentionPolicy, LevelRollupConfig};
+use crate::types::time::{RollupContentType, RollupRetentionPolicy};
 
 // TODO: Potentially move TimeHierarchyConfig and RollupConfig to a more central types location
 // if they are heavily used by the manager and core logic outside of just config.
@@ -23,6 +23,30 @@ use crate::types::time::{RollupContentType, RollupRetentionPolicy, LevelRollupCo
 /// Manages the time-based hierarchy of journal pages.
 ///
 /// Responsible for adding leaves, creating/finalizing pages, and coordinating with storage.
+/// Manages the time-based hierarchy of journal pages.
+///
+/// The `TimeHierarchyManager` is responsible for:
+/// - Maintaining the active pages for each level in the time hierarchy
+/// - Adding new leaves to the appropriate active pages
+/// - Triggering rollups when pages are full or reach their maximum age
+/// - Managing the chain of page hashes for integrity verification
+/// - Applying retention policies to clean up old pages
+///
+/// # Type Parameters
+/// * `S` - The storage backend implementation used to persist pages
+///
+/// # Fields
+/// * `config` - The application configuration
+/// * `storage` - The storage backend for persisting pages
+/// * `page_id_gen` - Generator for unique page IDs
+/// * `active_pages` - Cache of currently active pages by level
+/// * `last_finalized_page_ids` - Tracks the most recently finalized page ID for each level
+/// * `last_finalized_page_hashes` - Tracks the hash of the most recently finalized page for each level
+///
+/// # Implementation Notes
+/// - Uses async/await for I/O-bound operations
+/// - Thread-safe through interior mutability with `Mutex` and `Arc`
+/// - Maintains consistency through page hashing and chaining
 pub struct TimeHierarchyManager {
     config: Arc<Config>,
     storage: Arc<dyn StorageBackend>,
@@ -32,16 +56,43 @@ pub struct TimeHierarchyManager {
     /// This helps avoid repeatedly loading the same page from storage if many leaves
     /// are added to it sequentially.
     pub active_pages: Arc<Mutex<HashMap<u8, JournalPage>>>,
-    pub last_finalized_page_ids: Arc<tokio::sync::Mutex<HashMap<u8, u64>>>, // Tracks IDs for potential loading, debugging, or specific lookup needs
-    pub last_finalized_page_hashes: Arc<tokio::sync::Mutex<HashMap<u8, [u8; 32]>>>, // Tracks actual hashes for chaining
+    /// Tracks the most recently finalized page ID for each level.
+    ///
+    /// This is used for:
+    /// - Maintaining the chain of page hashes for integrity verification
+    /// - Debugging and monitoring
+    /// - Efficiently finding the most recent page when creating new ones
+    ///
+    /// The outer `Arc<Mutex<...>>` ensures thread-safe access to the map.
+    pub last_finalized_page_ids: Arc<tokio::sync::Mutex<HashMap<u8, u64>>>,
+    
+    /// Tracks the hashes of the most recently finalized page for each level.
+    ///
+    /// This is used for:
+    /// - Verifying the integrity of the page chain
+    /// - Providing cryptographic proof of journal consistency
+    /// - Linking parent and child pages during rollup operations
+    ///
+    /// The outer `Arc<Mutex<...>>` ensures thread-safe access to the map.
+    pub last_finalized_page_hashes: Arc<tokio::sync::Mutex<HashMap<u8, [u8; 32]>>>,
 }
 
 impl TimeHierarchyManager {
+    /// Loads a page from storage by its level and ID.
+    ///
+    /// # Arguments
+    /// * `level` - The hierarchy level of the page to load
+    /// * `page_id` - The ID of the page to load
+    ///
+    /// # Returns
+    /// Returns `Ok(Some(JournalPage))` if the page exists,
+    /// `Ok(None)` if the page doesn't exist, or
+    /// `Err(CJError)` if an error occurs while loading.
     pub async fn load_page_from_storage(&self, level: u8, page_id: u64) -> Result<Option<JournalPage>, CJError> {
         self.storage.load_page(level, page_id).await
     }
 
-    /// Creates a new `TimeHierarchyManager`.
+    /// Creates a new `TimeHierarchyManager` with the given configuration and storage backend.
     ///
     /// # Arguments
     /// * `config` - The application configuration, wrapped in an `Arc`.
@@ -260,6 +311,25 @@ impl TimeHierarchyManager {
         Ok(new_page)
     }
 
+    /// Adds a new leaf to the appropriate page in the time hierarchy.
+    ///
+    /// This method handles:
+    /// 1. Finding or creating the appropriate active page for the leaf's timestamp
+    /// 2. Adding the leaf to that page
+    /// 3. Finalizing the page if it's full or has reached its maximum age
+    /// 4. Triggering rollup to parent levels if needed
+    ///
+    /// # Arguments
+    /// * `leaf` - The journal leaf to add
+    ///
+    /// # Returns
+    /// The ID of the page the leaf was added to, or an error if the operation failed
+    ///
+    /// # Errors
+    /// Returns `CJError` if:
+    /// - The page cannot be created or loaded
+    /// - The leaf cannot be added to the page (e.g., out of order)
+    /// - The page cannot be stored after finalization
     pub async fn add_leaf(&self, leaf: &JournalLeaf) -> Result<u64, CJError> {
         println!("[ADD_LEAF] Called for leaf ts: {}", leaf.timestamp);
         let mut page = self.get_or_create_active_page_for_leaf(leaf).await?;
@@ -336,6 +406,20 @@ impl TimeHierarchyManager {
 
 
 
+    /// Triggers a special rollup operation for the current active L0 page.
+    ///
+    /// This is typically called during graceful shutdown or when explicitly requested.
+    /// It will finalize the current active L0 page and trigger rollups as needed,
+    /// even if the page isn't full or hasn't reached its maximum age.
+    ///
+    /// # Arguments
+    /// * `trigger_timestamp` - The timestamp to use for determining page windows
+    ///
+    /// # Returns
+    /// `Ok(())` if the operation succeeded, or an error if it failed
+    ///
+    /// # Errors
+    /// Returns `CJError` if the page cannot be finalized or stored
     pub async fn trigger_special_rollup(&self, trigger_timestamp: DateTime<Utc>) -> Result<(), CJError> {
         println!("[SPECIAL_ROLLUP] Called with trigger_timestamp: {}", trigger_timestamp);
 
@@ -494,6 +578,23 @@ pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
     Ok(())
 } // Closes async fn apply_retention_policies
 
+    /// Performs a rollup operation from a finalized child page to its parent.
+    ///
+    /// This method is called when a page is finalized and needs to be rolled up
+    /// into its parent level. It handles creating or updating the parent page
+    /// with the child's hash, and may trigger further rollups if the parent
+    /// becomes full or reaches its maximum age.
+    ///
+    /// # Arguments
+    /// * `finalized_page_level` - The level of the page being rolled up
+    /// * `finalized_page_hash` - The hash of the page being rolled up
+    /// * `original_trigger_timestamp` - The timestamp that triggered the rollup
+    ///
+    /// # Returns
+    /// `Ok(())` if the rollup completed successfully
+    ///
+    /// # Errors
+    /// Returns `CJError` if the rollup operation fails at any point
     async fn perform_rollup(&self, finalized_page_level: u8, finalized_page_hash: [u8; 32], original_trigger_timestamp: DateTime<Utc>) -> Result<(), CJError> {
         println!("[ROLLUP-DEBUG] ENTER perform_rollup: level={}, hash={:.8}, trigger_ts={}", 
             finalized_page_level, 
@@ -746,6 +847,10 @@ pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
 
 } // Closes impl TimeHierarchyManager
 
+/// Unit tests for the TimeHierarchyManager
+///
+/// These tests verify the functionality of the time-based hierarchy management,
+/// including page creation, rollup behavior, and retention policies.
 #[cfg(test)]
 mod tests {
     use super::*;

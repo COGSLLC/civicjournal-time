@@ -1,22 +1,43 @@
-// src/query/engine.rs
+//! Query engine implementation for the CivicJournal time-series database.
+//!
+//! Provides functionality for executing complex queries against the journal,
+//! including cryptographic proof generation and verification.
+
 use crate::query::types::{
     QueryError, LeafInclusionProof,
 };
 use crate::config::Config;
-
 use crate::storage::StorageBackend;
 use crate::core::time_manager::TimeHierarchyManager;
-
 use std::sync::Arc;
 
+/// The main query engine for executing complex queries against the journal.
+///
+/// This struct provides methods for querying journal data and generating
+/// cryptographic proofs of inclusion and consistency. It works with any
+/// storage backend that implements the `StorageBackend` trait.
+///
+/// # Type Parameters
+/// * `S` - The storage backend implementation used to retrieve journal data
 #[derive(Clone)]
 pub struct QueryEngine<S: StorageBackend + Send + Sync + 'static> {
+    /// The storage backend used to retrieve journal pages
     storage: Arc<S>,
+    
+    /// The time hierarchy manager for locating pages in the time-based hierarchy
     time_manager: Arc<TimeHierarchyManager>,
+    
+    /// Application configuration
     _config: Arc<Config>,
 }
 
 impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
+    /// Creates a new `QueryEngine` with the specified storage, time manager, and configuration.
+    ///
+    /// # Arguments
+    /// * `storage` - The storage backend for retrieving journal pages
+    /// * `time_manager` - The time hierarchy manager for locating pages
+    /// * `config` - Application configuration
     pub fn new(
         storage: Arc<S>,
         time_manager: Arc<TimeHierarchyManager>,
@@ -29,10 +50,26 @@ impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
         }
     }
 
+    /// Generates an inclusion proof for a specific leaf in the journal.
+    ///
+    /// This method searches for a leaf with the given hash and constructs
+    /// a cryptographic proof of its inclusion in the journal.
+    ///
+    /// # Arguments
+    /// * `leaf_hash` - The hash of the leaf to generate a proof for
+    ///
+    /// # Returns
+    /// A `LeafInclusionProof` containing the proof if the leaf is found,
+    /// or a `QueryError` if the leaf is not found or an error occurs.
+    ///
+    /// # Note
+    /// The current implementation searches through level 0 pages. Future
+    /// versions may support more efficient lookups using hints or indexing.
     pub async fn get_leaf_inclusion_proof(
         &self,
         leaf_hash: &[u8; 32],
-        // Optional: page_id_hint: Option<(u8, u64)>,
+        // TODO: Implement page_id_hint for more efficient lookups
+        // page_id_hint: Option<(u8, u64)>,
     ) -> Result<LeafInclusionProof, QueryError> {
         // TODO: Implement more efficient page searching, possibly with a timestamp hint
         // or by querying TimeHierarchyManager for pages within a relevant time range if known.

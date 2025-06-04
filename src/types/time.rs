@@ -14,10 +14,36 @@ pub enum RollupRetentionPolicy {
 }
 
 /// Defines the content type for rolled-up pages (L_N > 0).
+///
+/// This enum specifies how child pages are represented in their parent pages
+/// during rollup operations. The choice affects both storage efficiency and
+/// query performance for different access patterns.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RollupContentType {
-    ChildHashes, // Represents rolled-up content as a list of Merkle hashes of child pages
-    NetPatches,  // Represents rolled-up content as a net state patch (ObjectID -> Field -> Value)
+    /// Represents rolled-up content as a list of Merkle hashes of child pages.
+    ///
+    /// This is the default and most space-efficient option, storing only the
+    /// cryptographic hashes of child pages. It's ideal for audit trails and
+    /// integrity verification but requires loading child pages to access their
+    /// contents.
+    ///
+    /// Use this when:
+    /// - Storage efficiency is a priority
+    /// - You need strong cryptographic integrity guarantees
+    /// - Most queries don't require accessing the actual content of child pages
+    ChildHashes,
+    
+    /// Represents rolled-up content as a net state patch (ObjectID -> Field -> Value).
+    ///
+    /// This stores the net effect of all changes in child pages as a map of
+    /// object IDs to their modified fields. This enables efficient state
+    /// reconstruction without loading all child pages but uses more storage.
+    ///
+    /// Use this when:
+    /// - You need efficient state reconstruction at higher levels
+    /// - You frequently query the latest state of objects
+    /// - Storage efficiency is less critical than read performance
+    NetPatches,
 }
 
 impl Default for RollupContentType {

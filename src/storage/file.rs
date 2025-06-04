@@ -9,7 +9,6 @@ use crate::core::leaf::JournalLeaf;
 use crate::error::CJError;
 use crate::storage::StorageBackend;
 use crate::config::CompressionConfig;
-use crate::LevelRollupConfig;
 use crate::CompressionAlgorithm;
 use serde::{Deserialize, Serialize};
 use chrono::Utc; // For backup_timestamp_utc
@@ -715,6 +714,9 @@ impl StorageBackend for FileStorage {
             }
             StdFs::create_dir_all(&target_journal_dir_buf).map_err(|e| CJError::StorageError(format!("Failed to create target directory '{}': {}", target_journal_dir_buf.display(), e)))?;
 
+            let effective_extraction_root = target_journal_dir_buf.join(JOURNAL_SUBDIR);
+            StdFs::create_dir_all(&effective_extraction_root).map_err(|e| CJError::StorageError(format!("Failed to create effective extraction root directory '{}': {}", effective_extraction_root.display(), e)))?;
+
             let backup_file = StdFile::open(&backup_path_buf).map_err(|e| CJError::StorageError(format!("Failed to open backup file '{}': {}", backup_path_buf.display(), e)))?;
             let mut archive = ZipArchive::new(backup_file).map_err(|e| CJError::StorageError(format!("Failed to read zip archive from '{}': {}", backup_path_buf.display(), e)))?;
 
@@ -725,7 +727,7 @@ impl StorageBackend for FileStorage {
                     log::warn!("Skipping potentially unsafe file path in zip: '{}'", file_in_zip.name());
                     continue;
                 };
-                let outpath = target_journal_dir_buf.join(enclosed_name);
+                let outpath = effective_extraction_root.join(enclosed_name);
 
                 if file_in_zip.name().ends_with('/') { 
                     StdFs::create_dir_all(&outpath).map_err(|e| CJError::StorageError(format!("Failed to create directory '{}': {}", outpath.display(), e)))?;
@@ -953,12 +955,6 @@ mod tests {
 
 
 impl FileStorage {
-    /// Backs up the entire journal to the specified target path.
-    ///
-    /// This function iterates through all journal page files and copies them
-    /// to a corresponding structure within the `backup_target_path`.
-    /// The structure `backup_target_path/journal/level_X/page_Y.cjt` will be created.
-    /// Existing files in the backup target will be overwritten.
     /* pub async fn backup_journal_to_directory_raw(&self, backup_target_path: &Path) -> Result<(), CJError> {
         let source_journal_root = self.base_path.join(JOURNAL_SUBDIR);
         let target_journal_root = backup_target_path.join(JOURNAL_SUBDIR);
@@ -1062,116 +1058,6 @@ impl FileStorage {
         Ok(())
     } */
 
-    /// Restores the journal from a backup located at the specified source path.
-    ///
-    /// This function will first attempt to delete the existing journal directory
-    /// at `self.base_path/journal/` if it exists. It then copies all journal page
-    /// files from `backup_source_path/journal/level_X/page_Y.cjt` to the active
-    /// journal directory, preserving the structure.
-    ///
-    /// # Arguments
-    /// * `backup_source_path`: The root path of the backup. The journal files are
-    ///   expected to be in a 'journal' subdirectory within this path.
-    ///
-    /// # Errors
-    /// Returns `CJError::StorageError` if the backup source does not exist,
-    /// or if any directory/file operations fail.
-    pub async fn restore_journal(&self, backup_source_path: &Path) -> Result<(), CJError> {
-        // Attempt to read and log manifest information
-        let manifest_path = backup_source_path.join(BACKUP_MANIFEST_FILENAME);
-        match fs::read_to_string(&manifest_path).await {
-            Ok(manifest_content) => {
-                match serde_json::from_str::<BackupManifest>(&manifest_content) {
-                    Ok(manifest) => {
-                        log::info!(
-                            "Restoring from backup created at {} by version {}. Manifest version: {}. Source compression: {}",
-                            manifest.backup_timestamp_utc,
-                            manifest.backup_tool_version,
-                            manifest.manifest_file_format_version,
-                            manifest.source_storage_details.compression.algorithm
-                        );
-                        // Future: Could verify manifest_version compatibility here
-                        // Future: Could use manifest.files for integrity checks post-restore
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to parse backup manifest at {}: {}. Proceeding with restore.",
-                            manifest_path.display(),
-                            e
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                log::warn!(
-                    "Backup manifest not found or could not be read at {} (Error: {}). Proceeding with restore without manifest.",
-                    manifest_path.display(),
-                    e
-                );
-            }
-        }
-
-        let source_journal_root = backup_source_path.join(JOURNAL_SUBDIR);
-        let target_journal_root = self.base_path.join(JOURNAL_SUBDIR);
-
-        if !fs::try_exists(&source_journal_root).await.map_err(|e|
-            CJError::StorageError(format!("Backup source journal directory {} does not exist: {}", source_journal_root.display(), e))
-        )? {
-            return Err(CJError::StorageError(format!("Backup source journal directory {} not found.", source_journal_root.display())));
-        }
-
-        // Overwrite strategy: remove existing journal directory if it exists
-        if fs::try_exists(&target_journal_root).await.map_err(|e|
-            CJError::StorageError(format!("Failed to check existence of target journal directory {}: {}", target_journal_root.display(), e))
-        )? {
-            fs::remove_dir_all(&target_journal_root).await.map_err(|e|
-                CJError::StorageError(format!("Failed to remove existing target journal directory {}: {}", target_journal_root.display(), e))
-            )?;
-        }
-
-        // Create the target journal root directory (e.g., self.base_path/journal/)
-        fs::create_dir_all(&target_journal_root).await.map_err(|e|
-            CJError::StorageError(format!("Failed to create target journal root directory {}: {}", target_journal_root.display(), e))
-        )?;
-
-        // Iterate through level directories in the backup source
-        let mut level_dirs = fs::read_dir(&source_journal_root).await.map_err(|e|
-            CJError::StorageError(format!("Failed to read backup source journal root {}: {}", source_journal_root.display(), e))
-        )?;
-
-        while let Some(level_dir_entry) = level_dirs.next_entry().await.map_err(|e|
-            CJError::StorageError(format!("Failed to read entry in backup source journal root {}: {}", source_journal_root.display(), e))
-        )? {
-            let source_level_path = level_dir_entry.path();
-            if source_level_path.is_dir() && level_dir_entry.file_name().to_string_lossy().starts_with("level_") {
-                let target_level_path = target_journal_root.join(level_dir_entry.file_name());
-                fs::create_dir_all(&target_level_path).await.map_err(|e|
-                    CJError::StorageError(format!("Failed to create target level directory {}: {}", target_level_path.display(), e))
-                )?;
-
-                // Iterate through page files in the current source level directory
-                let mut page_files = fs::read_dir(&source_level_path).await.map_err(|e|
-                    CJError::StorageError(format!("Failed to read backup source level directory {}: {}", source_level_path.display(), e))
-                )?;
-
-                while let Some(page_file_entry) = page_files.next_entry().await.map_err(|e|
-                    CJError::StorageError(format!("Failed to read entry in backup source level directory {}: {}", source_level_path.display(), e))
-                )? {
-                    let source_page_file_path = page_file_entry.path();
-                    if source_page_file_path.is_file() &&
-                       page_file_entry.file_name().to_string_lossy().starts_with("page_") &&
-                       source_page_file_path.extension().is_some_and(|ext| ext == "cjt") {
-                        
-                        let target_page_file_path = target_level_path.join(page_file_entry.file_name());
-                        fs::copy(&source_page_file_path, &target_page_file_path).await.map_err(|e|
-                            CJError::StorageError(format!("Failed to copy page file from {} to {}: {}", source_page_file_path.display(), target_page_file_path.display(), e))
-                        )?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
