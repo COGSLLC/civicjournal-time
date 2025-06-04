@@ -17,6 +17,25 @@ pub type MerkleRoot = [u8; 32];
 /// Public for testing purposes to allow resetting the counter.
 pub static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 
+/// Helper for tests or multiple manager instances to generate page IDs
+/// independently. `TimeHierarchyManager` uses its own counter so tests can
+/// run concurrently without interfering with each other.
+#[derive(Debug)]
+pub struct PageIdGenerator {
+    counter: AtomicU64,
+}
+
+impl PageIdGenerator {
+    pub fn new() -> Self {
+        Self { counter: AtomicU64::new(0) }
+    }
+
+    pub fn next(&self) -> u64 {
+        self.counter.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -95,12 +114,13 @@ impl JournalPage {
     /// This function currently uses `eprintln!` for errors during Merkle tree construction
     /// and defaults to a zeroed Merkle root. This behavior might change to return a `Result`
     /// in the future.
-    pub fn new(
+    pub fn new_with_id(
+        page_id: u64,
         level: u8,
         prev_page_hash_arg: Option<[u8; 32]>,
         time_window_start: DateTime<Utc>,
-        config: &Config,) -> Self {
-        let page_id = NEXT_PAGE_ID.fetch_add(1, Ordering::SeqCst);
+        config: &Config,
+    ) -> Self {
 
         // Calculate end_time based on level duration
         let level_duration_seconds = config.time_hierarchy.levels
@@ -148,6 +168,18 @@ impl JournalPage {
             first_child_ts: None, // For L_N > 0 pages
             last_child_ts: None,  // For L_N > 0 pages
         }
+    }
+
+    /// Creates a new `JournalPage` using the global `NEXT_PAGE_ID` counter.
+    /// Existing code paths outside of tests can continue to call this method.
+    pub fn new(
+        level: u8,
+        prev_page_hash_arg: Option<[u8; 32]>,
+        time_window_start: DateTime<Utc>,
+        config: &Config,
+    ) -> Self {
+        let page_id = NEXT_PAGE_ID.fetch_add(1, Ordering::SeqCst);
+        Self::new_with_id(page_id, level, prev_page_hash_arg, time_window_start, config)
     }
 
     /// Adds a JournalLeaf to an L0 page.

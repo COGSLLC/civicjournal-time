@@ -183,8 +183,7 @@ mod tests {
     use super::*;
     use crate::core::page::JournalPage; // For creating dummy pages
     use chrono::{DateTime, Utc};
-    // Removed Ordering as reset_global_ids handles it
-    use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
+    use crate::core::page::PageIdGenerator;
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
     use crate::{core::leaf::JournalLeaf, StorageType, core::page::PageContent};
     use crate::types::time::{TimeHierarchyConfig, TimeLevel, LevelRollupConfig, RollupContentType};
@@ -230,9 +229,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_and_load_page() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let storage = MemoryStorage::new();
+                let storage = MemoryStorage::new();
         let now = Utc::now();
         let config = get_test_config();
         let page_to_store = create_test_page(0, now, None, &config);
@@ -258,9 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_page_exists() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let storage = MemoryStorage::new();
+                let storage = MemoryStorage::new();
         let now = Utc::now();
         let config = get_test_config();
         let page_to_store = create_test_page(1, now, None, &config);
@@ -276,9 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_storage() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let config = get_test_config();
+                let config = get_test_config();
         let storage = MemoryStorage::new();
         let now = Utc::now();
         let page1 = create_test_page(0, now, None, &config);
@@ -306,9 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_boxed_constructor() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let config = get_test_config();
+                let config = get_test_config();
         let now = Utc::now();
         
         let boxed_storage: Box<dyn StorageBackend> = MemoryStorage::new().boxed();
@@ -324,9 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_leaf_by_hash() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
-        reset_global_ids();
-        let storage = MemoryStorage::new();
+                let storage = MemoryStorage::new();
         let config = get_test_config();
         let now = Utc::now();
 
