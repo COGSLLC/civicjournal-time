@@ -183,10 +183,10 @@ mod tests {
     use super::*;
     use crate::core::page::JournalPage; // For creating dummy pages
     use chrono::{DateTime, Utc};
-    use crate::core::page::PageIdGenerator;
+    
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
     use crate::{core::leaf::JournalLeaf, StorageType, core::page::PageContent};
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel, LevelRollupConfig, RollupContentType};
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel, LevelRollupConfig};
     use crate::core::leaf::{LeafData, LeafDataV1}; // Added missing imports
 
     fn get_test_config() -> Config {

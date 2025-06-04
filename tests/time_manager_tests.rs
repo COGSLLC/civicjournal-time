@@ -14,7 +14,6 @@ use civicjournal_time::CompressionAlgorithm;
 use civicjournal_time::core::leaf::JournalLeaf;
 use civicjournal_time::types::time::RollupContentType;
 use std::sync::Arc; // Added Arc for shared ownership
-use std::sync::atomic::Ordering;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use serde_json::json;
 use tokio::time::{timeout, Duration as TokioDuration};
@@ -98,7 +97,7 @@ async fn test_add_leaf_to_new_page_and_check_active() {
     // Leaf 1: L0P0 (ID 0) finalizes, L1P1 (ID 1) finalizes. No L2 configured by create_test_manager.
     let leaf1_ts = now;
     let leaf1 = JournalLeaf::new(leaf1_ts, None, "container1".to_string(), json!({"id":1})).unwrap();
-    manager.add_leaf(&leaf1).await.unwrap();
+    manager.add_leaf(&leaf1, leaf1.timestamp).await.unwrap();
 
     let stored_l0_p0_leaf1 = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should be in storage after 1st leaf");
     assert_eq!(stored_l0_p0_leaf1.page_id, 0);
@@ -128,7 +127,7 @@ async fn test_add_leaf_to_new_page_and_check_active() {
     // Leaf 2: Creates L0P2 (ID 2) because L0P0 (ID 0) already finalized. L0P2 finalizes. L1P3 (ID 3) created from L0P2 rollup, finalizes.
     let leaf2_ts = now + Duration::milliseconds(100); // now is from first leaf's setup
     let leaf2 = JournalLeaf::new(leaf2_ts, None, "container1".to_string(), json!({"id":2})).unwrap();
-    manager.add_leaf(&leaf2).await.unwrap();
+    manager.add_leaf(&leaf2, leaf2.timestamp).await.unwrap();
 
     // Check L0P0 (ID 0) - should still have only leaf1. stored_l0_p0_leaf1 is from the first leaf's assertions.
     assert_eq!(stored_l0_p0_leaf1.page_id, 0);
@@ -186,7 +185,7 @@ async fn test_add_leaf_to_new_page_and_check_active() {
     // Original L1P1 (ID 1) and L1P3 (ID 3) are finalized and stored.
     let leaf3_ts = now + Duration::milliseconds(200);
     let leaf3 = JournalLeaf::new(leaf3_ts, None, "container3".to_string(), json!({"id":3})).unwrap();
-    manager.add_leaf(&leaf3).await.unwrap();
+    manager.add_leaf(&leaf3, leaf3.timestamp).await.unwrap();
 
     // Check L0P4 (ID 4) - created for leaf3
     let stored_l0_p4 = storage.load_page(0, 4).await.unwrap().expect("L0P4 (ID 4) should be in storage after leaf3");
@@ -225,7 +224,7 @@ async fn test_single_rollup_max_items() {
 
     // Leaf 1: L0P0 (ID 0) finalizes, L1P0 (ID 1) finalizes. No L2 configured by create_test_manager.
     let leaf1 = JournalLeaf::new(timestamp1, None, "rollup_container1".to_string(), json!({ "data": "leaf1" })).unwrap();
-    manager.add_leaf(&leaf1).await.unwrap();
+    manager.add_leaf(&leaf1, leaf1.timestamp).await.unwrap();
 
     let stored_l0_p0_leaf1 = storage.load_page(0, 0).await.unwrap().expect("L0P0 (ID 0) should be in storage after 1st leaf");
     assert_eq!(stored_l0_p0_leaf1.page_id, 0);
@@ -255,7 +254,7 @@ async fn test_single_rollup_max_items() {
     // Leaf 2: Creates L0P2 (ID 2) because L0P0 (ID 0) already finalized. L0P2 finalizes. L1P3 (ID 3) created from L0P2 rollup, finalizes.
     let timestamp2 = timestamp1 + Duration::milliseconds(100); // timestamp1 is from first leaf's setup
     let leaf2 = JournalLeaf::new(timestamp2, None, "rollup_container2".to_string(), json!({ "data": "leaf2" })).unwrap();
-    manager.add_leaf(&leaf2).await.unwrap();
+    manager.add_leaf(&leaf2, leaf2.timestamp).await.unwrap();
 
     // Check L0P0 (ID 0) - should still have only leaf1. stored_l0_p0_leaf1 is from the first leaf's assertions.
     assert_eq!(stored_l0_p0_leaf1.page_id, 0);
@@ -314,7 +313,7 @@ async fn test_single_rollup_max_items() {
     // Leaf 3: Creates L0P4 (ID 4) because L0P2 (ID 2) already finalized. L0P4 finalizes. L1P5 (ID 5) created from L0P4 rollup, finalizes.
     let timestamp3 = timestamp2 + Duration::milliseconds(100);
     let leaf3 = JournalLeaf::new(timestamp3, None, "rollup_container3".to_string(), json!({ "data": "leaf3" })).unwrap();
-    manager.add_leaf(&leaf3).await.unwrap();
+    manager.add_leaf(&leaf3, leaf3.timestamp).await.unwrap();
 
     // Check L0P4 (ID 4) - created for leaf3
     let stored_l0_p4 = storage.load_page(0, 4).await.unwrap().expect("L0P4 (ID 4) should be in storage after leaf3");
@@ -409,7 +408,7 @@ async fn test_cascading_rollup_max_items() {
         "cascade_container".to_string(),
         json!({ "data": "leaf1_for_cascade" })
     ).expect("Leaf1 creation failed in test_cascading_rollup_max_items");
-    manager.add_leaf(&leaf1).await.expect("Failed to add leaf1 for cascade");
+    manager.add_leaf(&leaf1, leaf1.timestamp).await.expect("Failed to add leaf1 for cascade");
 
     // L0P0 (ID 0) assertions
     let stored_l0_page = storage.load_page(0, 0).await.expect("Storage query failed for L0P0 in cascade").expect("L0P0 not found after cascade");
@@ -818,23 +817,23 @@ async fn test_age_based_rollup_cascade() {
         // Leaf 1 (time t)
         let leaf1_ts = initial_time;
         let leaf1 = JournalLeaf::new(leaf1_ts, None, "container1".to_string(), json!({"data": "leaf1"})).unwrap();
-        manager.add_leaf(&leaf1).await.unwrap();
+        manager.add_leaf(&leaf1, leaf1.timestamp).await.unwrap();
 
         // Leaf 2 (time t + 3s) - should trigger L0 rollup due to age (2s)
         let leaf2_ts = initial_time + Duration::seconds(3);
         let leaf2 = JournalLeaf::new(leaf2_ts, None, "container1".to_string(), json!({"data": "leaf2"})).unwrap();
-        manager.add_leaf(&leaf2).await.unwrap();
+        manager.add_leaf(&leaf2, leaf2.timestamp).await.unwrap();
 
         // Leaf 3 (time t + 61s) - new L0 page
         let leaf3_ts = initial_time + Duration::seconds(61);
         let leaf3 = JournalLeaf::new(leaf3_ts, None, "container1".to_string(), json!({"data": "leaf3"})).unwrap();
-        manager.add_leaf(&leaf3).await.unwrap();
+        manager.add_leaf(&leaf3, leaf3.timestamp).await.unwrap();
 
         // Leaf 4 (time t + 63s) - should trigger L0 rollup (age 2s), then L1 rollup (age 4s for L1 page containing L0P0)
         // THIS IS WHERE THE HANG OCCURS
         let leaf4_ts = initial_time + Duration::seconds(63);
         let leaf4 = JournalLeaf::new(leaf4_ts, None, "container1".to_string(), json!({"data": "leaf4"})).unwrap();
-        manager.add_leaf(&leaf4).await.unwrap();
+        manager.add_leaf(&leaf4, leaf4.timestamp).await.unwrap();
 
         println!("[TEST-DEBUG] test_age_based_rollup_cascade logic completed (if not hung)");
     };

@@ -714,8 +714,8 @@ impl StorageBackend for FileStorage {
             }
             StdFs::create_dir_all(&target_journal_dir_buf).map_err(|e| CJError::StorageError(format!("Failed to create target directory '{}': {}", target_journal_dir_buf.display(), e)))?;
 
-            let effective_extraction_root = target_journal_dir_buf.join(JOURNAL_SUBDIR);
-            StdFs::create_dir_all(&effective_extraction_root).map_err(|e| CJError::StorageError(format!("Failed to create effective extraction root directory '{}': {}", effective_extraction_root.display(), e)))?;
+            let effective_extraction_root = target_journal_dir_buf.clone(); // Path already points to the 'journal' dir where levels should be created
+            // StdFs::create_dir_all(&effective_extraction_root) is already done for target_journal_dir_buf above.
 
             let backup_file = StdFile::open(&backup_path_buf).map_err(|e| CJError::StorageError(format!("Failed to open backup file '{}': {}", backup_path_buf.display(), e)))?;
             let mut archive = ZipArchive::new(backup_file).map_err(|e| CJError::StorageError(format!("Failed to read zip archive from '{}': {}", backup_path_buf.display(), e)))?;
@@ -764,70 +764,17 @@ impl StorageBackend for FileStorage {
 mod tests {
     use std::sync::Arc;
     // use std::time::SystemTime; // Marked as unused
-    use chrono::{Utc, Duration};
+    use chrono::Utc;
     use tempfile::tempdir; // Added missing import
     use super::FileStorage; // Added missing import
 
     use crate::config::{Config, CompressionConfig};
-    use crate::CompressionAlgorithm;
-    use crate::core::leaf::{JournalLeaf, LeafData, LeafDataV1};
+    
+    use crate::core::leaf::JournalLeaf;
     use crate::core::page::JournalPage;
     use crate::storage::StorageBackend;
 
 
-    // Helper function to create a test L0 page with leaves
-    #[allow(dead_code)]
-    fn create_test_l0_page_with_leaves(
-        prev_hash: Option<[u8; 32]>,
-        page_id_val: u64, // page_id is now set internally by JournalPage::new, but we can override it for tests
-        creation_timestamp: chrono::DateTime<Utc>,
-        leaves_data: Vec<crate::core::leaf::LeafDataV1>, // Pass LeafDataV1 structs directly
-        config: &Config,
-    ) -> JournalPage {
-        let mut page = JournalPage::new(0, prev_hash, creation_timestamp, config);
-        page.page_id = page_id_val; // Override auto-generated page_id for predictable test results
-
-        for leaf_v1_data in leaves_data {
-            let leaf_json_payload = serde_json::to_value(crate::core::leaf::LeafData::V1(leaf_v1_data.clone()))
-                .expect("Failed to serialize LeafDataV1 for test page helper");
-            let leaf = JournalLeaf::new(
-                leaf_v1_data.timestamp,
-                None, // prev_leaf_hash for individual leaves, manage at higher level if needed
-                format!("container_for_page_{}", page_id_val), // Example container_id
-                leaf_json_payload
-            ).expect("Failed to create JournalLeaf in test page helper");
-            page.add_leaf(leaf);
-        }
-        page.recalculate_merkle_root_and_page_hash();
-        page
-    }
-
-    // Helper function to create a test page
-    fn create_test_page(level: u8, creation_timestamp: chrono::DateTime<Utc>, prev_hash: Option<[u8; 32]>, config: &Config) -> JournalPage {
-        let mut page = JournalPage::new(level, prev_hash, creation_timestamp, config);
-        if level == 0 {
-            let dummy_leaf_data = crate::core::leaf::LeafDataV1 {
-                timestamp: creation_timestamp,
-                content_type: "application/octet-stream".to_string(),
-                content: vec![0u8; 10],
-                author: "dummy_author".to_string(),
-                signature: "dummy_signature".to_string(),
-            };
-            let dummy_leaf_json = serde_json::to_value(crate::core::leaf::LeafData::V1(dummy_leaf_data)).expect("Failed to serialize dummy leaf data");
-            let dummy_journal_leaf = JournalLeaf::new(
-                creation_timestamp, 
-                None, 
-                "dummy_container".to_string(), 
-                dummy_leaf_json
-            ).expect("Failed to create dummy journal leaf");
-            page.add_leaf(dummy_journal_leaf);
-        } else {
-            // Add a dummy thrall page hash for L1+
-            page.add_thrall_hash([0u8; 32], creation_timestamp);
-        }
-        page.recalculate_merkle_root_and_page_hash(); // Ensure hash is updated after content addition
-        page
-    }
 
     // Helper function to create a FileStorage instance in a temporary directory
     async fn setup_test_filestorage() -> (FileStorage, tempfile::TempDir) {
@@ -1064,9 +1011,10 @@ impl FileStorage {
 mod tests_to_merge {
     use super::*;
     
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
     use tempfile::tempdir;
-    use crate::core::page::{JournalPage, PageIdGenerator};
+    use crate::core::page::JournalPage;
+use crate::LevelRollupConfig;
     
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
     use crate::types::time::{TimeLevel};

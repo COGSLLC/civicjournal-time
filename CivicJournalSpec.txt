@@ -41,35 +41,56 @@ Child pages (“thralls”) roll up into parents at each boundary.
 
 ---
 
-### 4. Data Structures
+### 4. File Format (.cjt)
+
+Journal pages are stored in a custom binary format with the following structure:
+
+```
++----------------+----------------+----------------+----------------+----------------+----------------+
+| Magic (4B)     | Version (1B)   | Compression (1B) | Page Data (variable)       |
+| 'CJTP'         | 0x01           | 0x00-0x03      | (Compressed if applicable)  |
++----------------+----------------+----------------+----------------+-----------+
+```
+
+- **Magic (4 bytes)**: `'CJTP'` (0x434A5450) - Identifies the file as a CivicJournal Time Page
+- **Version (1 byte)**: `0x01` - Format version
+- **Compression (1 byte)**: 
+  - `0x00`: None
+  - `0x01`: Zstd
+  - `0x02`: Lz4
+  - `0x03`: Snappy
+- **Page Data**: Serialized `JournalPage` structure, optionally compressed
+
+### 5. Data Structures
 
 ```text
 struct JournalLeaf {
   leaf_id: u64,                 // Unique, incrementing ID for the leaf
   timestamp: i64,               // Unix timestamp (seconds) of when the leaf was recorded
   prev_hash: Option<[u8; 32]>,  // Hash of the previous leaf in the same container's logical chain (if any)
-  container_id: String,         // Identifier for the data entity this leaf pertains to (e.g., "proposal:XYZ")
-  delta_payload: Vec<u8>,       // The actual data/change, as a byte vector (format application-defined)
+  container_id: String,         // Serves as ObjectID for NetPatches rollup
+  delta_payload: serde_json::Value, // The actual delta data, expected to be a JSON object for NetPatch transformation
   leaf_hash: [u8; 32]           // SHA256(leaf_id || timestamp || prev_hash || container_id || delta_payload)
 }
 
+enum PageContent {
+  Leaves(Vec<JournalLeaf>),     // Level 0: Contains actual journal entries
+  ThrallHashes(Vec<[u8; 32]>)  // Level 1+: Contains hashes of child pages
+}
+
 struct JournalPage {
-  page_id: String,              // Unique identifier for the page (e.g., a UUID or derived from level and start_time)
-  level: u8,                    // Time-hierarchy level (0-6)
-  start_time: i64,              // Unix timestamp for the start of the page's time window
-  end_time: i64,                // Unix timestamp for the end of the page's time window
-  // Content depends on the page's role:
-  // - Level 0 pages typically contain JournalLeaf objects.
-  // - Higher-level pages (L1+) typically contain hashes of their child pages (ThrallHashes).
-  content: PageContent,         // Enum: Leaves(Vec<JournalLeaf>) or ThrallHashes(Vec<[u8; 32]>)
-  merkle_root: [u8; 32],        // Root of Merkle tree over the page's content
-  prev_page_hash: Option<[u8; 32]>, // Hash of the previous JournalPage at the same level (if any)
+  level: u8,                    // Hierarchy level (0 = leaves, 1 = hours, etc.)
+  page_id: u64,                 // Unique ID for this page within its level
+  creation_timestamp: i64,       // Start of this page's time window
+  window_end: i64,               // End of this page's time window
+  content: PageContent,          // The actual content (leaves or thrall hashes)
+  merkle_root: [u8; 32],        // Root hash of the Merkle tree for this page's content
+  first_child_timestamp: i64,   // Timestamp of the first child item
+  last_child_timestamp: i64,    // Timestamp of the last child item
+  prev_page_hash: Option<[u8; 32]>, // Hash of the previous page at this level
   page_hash: [u8; 32],          // SHA256 hash of key page fields (e.g., page_id, level, start_time, end_time, merkle_root, prev_page_hash)
   ts_proof: Option<Vec<u8>>     // External timestamp proof for MerkleRoot (e.g., RFC3161, optional)
 }
-
-// Note: PageContent is an enum in the implementation:
-// enum PageContent {
 //   Leaves(Vec<JournalLeaf>),
 //   ThrallHashes(Vec<[u8; 32]>), // Hashes of finalized child pages
 // }

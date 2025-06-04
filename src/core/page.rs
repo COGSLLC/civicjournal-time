@@ -394,6 +394,39 @@ impl JournalPage {
             PageContent::NetPatches(patches) => patches.is_empty(),
         }
     }
+
+    /// Determines whether this page should be finalized based on its content and the given parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_leaf_timestamp` - The timestamp of the new leaf to be added to the page.
+    /// * `operation_time` - The current operation time.
+    /// * `max_leaves` - The maximum number of leaves allowed in the page.
+    /// * `max_age` - The maximum age of the page.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of two boolean values. The first value indicates whether the page should be finalized
+    /// due to reaching the maximum number of leaves or exceeding the maximum age. The second value
+    /// indicates whether the page should be finalized due to the new leaf not fitting within the page's
+    /// natural time window.
+    pub fn should_finalize(
+        &self,
+        new_leaf_timestamp: DateTime<Utc>,
+        operation_time: DateTime<Utc>,
+        max_leaves: u32,
+        max_age: Option<chrono::Duration>,
+    ) -> (bool, bool) {
+        let is_over_max_leaves = self.content_len() >= max_leaves as usize;
+        let oldest_ts = self.first_child_ts.unwrap_or(self.creation_timestamp);
+        let calculated_age = operation_time - oldest_ts;
+        let is_over_age = max_age.map_or(false, |max_age| calculated_age > max_age);
+        let is_outside_window = new_leaf_timestamp >= self.end_time;
+
+        println!("[JP_SHOULD_FINALIZE_AGE] Checking is_over_age: operation_time = {:?}, oldest_ts_in_page_for_age_check = {:?}, max_age = {:?}", operation_time, oldest_ts, max_age);
+
+        (is_over_max_leaves || is_over_age, is_outside_window)
+    }
 }
 
 #[cfg(test)]
@@ -404,7 +437,7 @@ mod tests {
 
     // Removed local PAGE_TEST_MUTEX, lazy_static, and unused Mutex/Ordering imports
 
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel}; // Renamed to avoid conflict
+    use crate::types::time::TimeHierarchyConfig; // Renamed to avoid conflict
     use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
 
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};

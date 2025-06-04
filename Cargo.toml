@@ -34,7 +34,7 @@ hex = "0.4"
 ring = { version = "0.17", optional = true }  # For cryptographic operations
 
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time", "test-util"], optional = true }
 futures = { version = "0.3", optional = true }
 
 # Configuration and environment

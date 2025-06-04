@@ -11,9 +11,9 @@ use super::{
     Config,
     TimeHierarchyConfig,
 };
-use crate::error::CJError;
 use super::error::ConfigError; // For return types in validation functions
 use crate::StorageType;      // For StorageType enum used in tests
+use crate::CJError;          // For error types
 
 /// Validates the application configuration.
 ///
@@ -447,10 +447,11 @@ fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CompressionAlgorithm;
     use crate::config::{
         CompressionConfig, RetentionConfig, StorageConfig,
     };
-    use crate::types::{CompressionAlgorithm, TimeLevel}; // Import the TimeLevel STRUCT and CompressionAlgorithm
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel, LevelRollupConfig}; 
 
     #[test]
     fn test_validate_time_hierarchy() {

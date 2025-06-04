@@ -164,7 +164,7 @@ async fn test_backup_and_restore() {
     let restore_storage = FileStorage::new(restore_dir.path().to_path_buf(), restore_config.compression.clone()).await.unwrap();
     
     // Restore from backup
-    restore_storage.restore_journal(&backup_path, restore_dir.path()).await.unwrap();
+    restore_storage.restore_journal(&backup_path, &restore_dir.path().join("journal")).await.unwrap();
     
     // Verify restored data
     for i in 0..3 {
