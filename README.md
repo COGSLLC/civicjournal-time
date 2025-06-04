@@ -1,3 +1,4 @@
+⚠️ ALPHA (v0.0.24) — Core rollup functionality implemented with ongoing refinements to parent page accumulation.
 # CivicJournal-Time
 
 **An append-only, verifiable ledger for robust audit trails and time-series data management.**
