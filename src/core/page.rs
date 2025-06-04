@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::core::merkle::MerkleTree;
 use crate::core::leaf::JournalLeaf;
 use crate::config::Config; // Added for calculating end_time
+use crate::types::time::RollupContentType;
 
 /// Type alias for a Merkle root, which is a SHA256 hash ([u8; 32]).
 /// This is consistent with the `MerkleRoot` type in `crate::core::merkle`.
@@ -16,10 +17,13 @@ pub type MerkleRoot = [u8; 32];
 /// Public for testing purposes to allow resetting the counter.
 pub(crate) static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 
+use std::collections::HashMap;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum PageContent {
     Leaves(Vec<JournalLeaf>),
     ThrallHashes(Vec<[u8; 32]>),
+    NetPatches(HashMap<String, HashMap<String, serde_json::Value>>), // ObjectID -> FieldName -> Value
 }
 
 
@@ -67,6 +71,10 @@ pub struct JournalPage {
     pub page_hash: [u8; 32],
     /// An optional external timestamp proof for the Merkle root of this page.
     pub ts_proof: Option<Vec<u8>>,
+    /// Timestamp of the first child item (leaf or rolled-up page) included in this page (for L_N > 0).
+    pub first_child_ts: Option<DateTime<Utc>>,
+    /// Timestamp of the last child item (leaf or rolled-up page) included in this page (for L_N > 0).
+    pub last_child_ts: Option<DateTime<Utc>>,
 }
 
 impl JournalPage {
@@ -120,12 +128,25 @@ impl JournalPage {
             level,
             creation_timestamp: time_window_start,
             end_time,
-            content: if level == 0 { PageContent::Leaves(Vec::new()) } else { PageContent::ThrallHashes(Vec::new()) },
+            content: {
+                if level == 0 {
+                    PageContent::Leaves(Vec::new())
+                } else {
+                    let level_config = config.time_hierarchy.levels.get(level as usize)
+                        .unwrap_or_else(|| panic!("Level {} config missing in JournalPage::new. Config: {:?}", level, config.time_hierarchy.levels));
+                    match level_config.rollup_config.content_type {
+                        RollupContentType::ChildHashes => PageContent::ThrallHashes(Vec::new()),
+                        RollupContentType::NetPatches => PageContent::NetPatches(HashMap::new()),
+                    }
+                }
+            },
             merkle_root: [0u8; 32], // Default for empty content, will be recalculated
             prev_page_hash: prev_page_hash_arg,
-            last_leaf_timestamp: None,
+            last_leaf_timestamp: None, // Specific to L0 pages with actual leaves
             page_hash: page_hash_val,
             ts_proof: None,
+            first_child_ts: None, // For L_N > 0 pages
+            last_child_ts: None,  // For L_N > 0 pages
         }
     }
 
@@ -137,7 +158,13 @@ impl JournalPage {
         }
         match self.content {
             PageContent::Leaves(ref mut leaves) => {
-                self.last_leaf_timestamp = Some(leaf.timestamp);
+                self.last_leaf_timestamp = Some(leaf.timestamp); // This is for L0 original leaf timestamp tracking
+                if self.first_child_ts.is_none() || leaf.timestamp < self.first_child_ts.unwrap() {
+                    self.first_child_ts = Some(leaf.timestamp);
+                }
+                if self.last_child_ts.is_none() || leaf.timestamp > self.last_child_ts.unwrap() {
+                    self.last_child_ts = Some(leaf.timestamp);
+                }
                 leaves.push(leaf);
             }
             _ => panic!("Attempted to add leaf to a page not containing PageContent::Leaves."),
@@ -153,7 +180,12 @@ impl JournalPage {
         }
         match self.content {
             PageContent::ThrallHashes(ref mut hashes) => {
-                self.last_leaf_timestamp = Some(content_timestamp); // Using last_leaf_timestamp to track latest content time
+                if self.first_child_ts.is_none() || content_timestamp < self.first_child_ts.unwrap() {
+                    self.first_child_ts = Some(content_timestamp);
+                }
+                if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
+                    self.last_child_ts = Some(content_timestamp);
+                }
                 hashes.push(thrall_page_hash);
             }
             _ => panic!("Attempted to add thrall_hash to a page not containing PageContent::ThrallHashes."),
@@ -161,11 +193,76 @@ impl JournalPage {
         // IMPORTANT: Merkle root and page_hash should be recalculated by the caller.
     }
 
+    /// Merges NetPatches into an L1+ page.
+    /// Panics if called on an L0 page or if content is not PageContent::NetPatches.
+    pub(crate) fn merge_net_patches(&mut self, patches_to_merge: HashMap<String, HashMap<String, serde_json::Value>>, content_timestamp: DateTime<Utc>) {
+        if self.level == 0 {
+            panic!("merge_net_patches cannot be called on L0 pages.");
+        }
+        match self.content {
+            PageContent::NetPatches(ref mut existing_patches) => {
+                for (object_id, field_patches) in patches_to_merge {
+                    let entry = existing_patches.entry(object_id).or_insert_with(HashMap::new);
+                    for (field_name, value) in field_patches {
+                        entry.insert(field_name, value);
+                    }
+                }
+
+                if self.first_child_ts.is_none() || content_timestamp < self.first_child_ts.unwrap() {
+                    self.first_child_ts = Some(content_timestamp);
+                }
+                if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
+                    self.last_child_ts = Some(content_timestamp);
+                }
+            }
+            _ => panic!("Attempted to merge_net_patches into a page not containing PageContent::NetPatches."),
+        }
+        // IMPORTANT: Merkle root and page_hash should be recalculated by the caller.
+    }
+
+
     /// Recalculates the Merkle root from `content_hashes` and then updates `page_hash`.
     pub fn recalculate_merkle_root_and_page_hash(&mut self) {
         let actual_leaf_hashes: Vec<[u8; 32]> = match self.content {
             PageContent::Leaves(ref leaves) => leaves.iter().map(|leaf| leaf.leaf_hash).collect(),
             PageContent::ThrallHashes(ref hashes) => hashes.clone(),
+            PageContent::NetPatches(ref patches_map) => {
+                if patches_map.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut net_patch_tuples_hashes = Vec::new();
+                    // Sort by ObjectID (String key)
+                    let mut sorted_object_ids: Vec<_> = patches_map.keys().collect();
+                    sorted_object_ids.sort_unstable();
+
+                    for object_id_str in sorted_object_ids {
+                        if let Some(field_map) = patches_map.get(object_id_str) {
+                            // Sort by FieldName (String key)
+                            let mut sorted_field_names: Vec<_> = field_map.keys().collect();
+                            sorted_field_names.sort_unstable();
+
+                            for field_name_str in sorted_field_names {
+                                if let Some(value_json) = field_map.get(field_name_str) {
+                                    // Serialize value to canonical bytes
+                                    let value_bytes = serde_json::to_vec(value_json)
+                                        .unwrap_or_else(|e| {
+                                            eprintln!("Failed to serialize NetPatch value to JSON: {}", e);
+                                            Vec::new()
+                                        });
+                                    let value_hash: [u8; 32] = Sha256::digest(&value_bytes).into();
+
+                                    let mut tuple_hasher = Sha256::new();
+                                    tuple_hasher.update(object_id_str.as_bytes());
+                                    tuple_hasher.update(field_name_str.as_bytes());
+                                    tuple_hasher.update(value_hash);
+                                    net_patch_tuples_hashes.push(tuple_hasher.finalize().into());
+                                }
+                            }
+                        }
+                    }
+                    net_patch_tuples_hashes
+                }
+            }
         };
 
         self.merkle_root = if actual_leaf_hashes.is_empty() {
@@ -190,7 +287,14 @@ impl JournalPage {
         if let Some(prev_hash_val) = self.prev_page_hash {
             hasher.update(prev_hash_val);
         }
-        // Note: last_leaf_timestamp is not part of page_hash as it's too dynamic for page identity.
+        if let Some(first_ts) = self.first_child_ts {
+            hasher.update(first_ts.to_rfc3339().as_bytes());
+        }
+        if let Some(last_ts) = self.last_child_ts {
+            hasher.update(last_ts.to_rfc3339().as_bytes());
+        }
+        // Note: last_leaf_timestamp (original L0 leaf time) is distinct from first/last_child_ts (rollup content time range)
+        // and is not part of page_hash as it's too dynamic for page identity if we were to update it for L_N > 0.
         self.page_hash = hasher.finalize().into();
     }
 
@@ -199,6 +303,7 @@ impl JournalPage {
         match &self.content {
             PageContent::Leaves(leaves) => leaves.len(),
             PageContent::ThrallHashes(hashes) => hashes.len(),
+            PageContent::NetPatches(patches) => patches.len(), // Number of ObjectIDs
         }
     }
 
@@ -207,6 +312,7 @@ impl JournalPage {
         match &self.content {
             PageContent::Leaves(leaves) => leaves.is_empty(),
             PageContent::ThrallHashes(hashes) => hashes.is_empty(),
+            PageContent::NetPatches(patches) => patches.is_empty(),
         }
     }
 }

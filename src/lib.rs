@@ -31,7 +31,7 @@ pub use types::{
     CompressionAlgorithm,
     LogLevel,
     StorageType,
-    RollupConfig, TimeHierarchyConfig, TimeLevel,
+    LevelRollupConfig, TimeHierarchyConfig, TimeLevel,
 };
 
 /// Global configuration instance

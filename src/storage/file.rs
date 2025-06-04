@@ -12,7 +12,7 @@ use crate::config::{
     Config, CompressionConfig, StorageConfig, LoggingConfig, MetricsConfig, RetentionConfig,
 };
 use crate::types::{
-    TimeHierarchyConfig, TimeLevel, RollupConfig, StorageType, RollupRetentionPolicy,
+    TimeHierarchyConfig, TimeLevel, LevelRollupConfig, StorageType, RollupRetentionPolicy,
 };
 use crate::CompressionAlgorithm;
 use serde::{Deserialize, Serialize};
@@ -325,6 +325,104 @@ impl StorageBackend for FileStorage {
             }
         }
         Ok(summaries)
+    }
+
+    async fn load_page_by_hash(&self, target_page_hash: [u8; 32]) -> Result<Option<JournalPage>, CJError> {
+        // TODO: This is inefficient. Consider adding an index (page_hash -> file_path)
+        // or limiting search if possible (e.g., if child level is known).
+        // For now, iterates through all levels and pages.
+
+        let journal_dir = self.base_path.join(JOURNAL_SUBDIR);
+        if !journal_dir.exists() {
+            return Ok(None);
+        }
+
+        let mut dir_entries = match tokio::fs::read_dir(&journal_dir).await {
+            Ok(de) => de,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(CJError::StorageError(format!("Failed to read journal directory {}: {}", journal_dir.display(), e))),
+        };
+
+        while let Some(entry) = dir_entries.next_entry().await
+            .map_err(|e| CJError::StorageError(format!("Error reading entry in {}: {}", journal_dir.display(), e)))? {
+            
+            let path = entry.path();
+            if path.is_dir() {
+                let dir_name = path.file_name().unwrap_or_default().to_string_lossy();
+                if dir_name.starts_with("level_") {
+                    let mut page_files = match tokio::fs::read_dir(&path).await {
+                        Ok(pf) => pf,
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue, // Level dir might be empty or gone
+                        Err(e) => return Err(CJError::StorageError(format!("Failed to read level directory {}: {}", path.display(), e))),
+                    };
+                    
+                    while let Some(page_entry) = page_files.next_entry().await
+                        .map_err(|e| CJError::StorageError(format!("Error reading entry in {}: {}", path.display(), e)))? {
+                        
+                        let page_path = page_entry.path();
+                        // Check for .cjt and known compressed variants
+                        let extension = page_path.extension().and_then(std::ffi::OsStr::to_str);
+                        let is_page_file = match extension {
+                            Some("cjt") | Some("cjtgz") | Some("cjtzst") | Some("cjtLz4") | Some("cjtsnappy") => true,
+                            _ => false,
+                        };
+
+                        if page_path.is_file() && is_page_file {
+                            let file_content = match tokio::fs::read(&page_path).await {
+                                Ok(fc) => fc,
+                                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue, // File might have been deleted concurrently
+                                Err(e) => return Err(CJError::StorageError(format!("Failed to read page file {}: {}", page_path.display(), e))),
+                            };
+
+                            if file_content.len() < 6 { // MAGIC (4) + VERSION (1) + COMPRESSION_ALGO (1)
+                                eprintln!("[FileStorage::load_page_by_hash] Skipping malformed file (too short): {}", page_path.display());
+                                continue;
+                            }
+                            if &file_content[0..4] != MAGIC_STRING {
+                                eprintln!("[FileStorage::load_page_by_hash] Skipping file with incorrect magic string: {}", page_path.display());
+                                continue;
+                            }
+                            // let _format_version = file_content[4]; // Could check this
+                            let compression_algo_byte = file_content[5];
+                            let compression_algo = match u8_to_compression_algorithm(compression_algo_byte) {
+                                Ok(ca) => ca,
+                                Err(_) => {
+                                    eprintln!("[FileStorage::load_page_by_hash] Skipping file with unknown compression algorithm byte {}: {}", compression_algo_byte, page_path.display());
+                                    continue;
+                                }
+                            };
+                            
+                            let actual_data = &file_content[6..];
+                            let decompressed_data = match compression_algo {
+                                CompressionAlgorithm::None => actual_data.to_vec(),
+                                CompressionAlgorithm::Zstd => decode_all(actual_data)
+                                    .map_err(|e| CJError::CompressionError(format!("Zstd decompression failed for {}: {}", page_path.display(), e)))?,
+                                CompressionAlgorithm::Lz4 => decompress_size_prepended(actual_data)
+                                    .map_err(|e| CJError::CompressionError(format!("Lz4 decompression failed for {}: {}", page_path.display(), e)))?,
+                                CompressionAlgorithm::Snappy => {
+                                    let mut decoder = SnapDecoder::new();
+                                    decoder.decompress_vec(actual_data)
+                                        .map_err(|e| CJError::CompressionError(format!("Snappy decompression failed for {}: {}", page_path.display(), e)))?
+                                }
+                            };
+
+                            let page: JournalPage = match serde_json::from_slice(&decompressed_data) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    eprintln!("[FileStorage::load_page_by_hash] Failed to deserialize page from {}: {}. Skipping.", page_path.display(), e);
+                                    continue;
+                                }
+                            };
+
+                            if page.page_hash == target_page_hash {
+                                return Ok(Some(page));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None) // Page with the given hash not found
     }
 
     async fn load_leaf_by_hash(&self, target_leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, CJError> {

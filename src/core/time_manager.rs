@@ -9,7 +9,7 @@ use crate::storage::StorageBackend;
 use crate::core::leaf::JournalLeaf;
 use crate::core::page::{JournalPage, PageContent};
 use crate::error::CJError;
-use crate::types::time::RollupRetentionPolicy;
+use crate::types::time::{RollupContentType, RollupRetentionPolicy};
 
 // TODO: Potentially move TimeHierarchyConfig and RollupConfig to a more central types location
 // if they are heavily used by the manager and core logic outside of just config.
@@ -110,7 +110,7 @@ impl TimeHierarchyManager {
         println!("[GOCAPL] Timestamp check (leaf >= page_start && leaf < page_end): {}", is_in_window);
         if is_in_window {
                 // Check if the page is not full
-            let has_space = active_page_entry.content_len() < self.config.rollup.max_leaves_per_page;
+            let has_space = active_page_entry.content_len() < self.config.time_hierarchy.levels[0].rollup_config.max_items_per_page;
             println!("[GOCAPL] Space check (leaves < max_leaves): {}", has_space);
             if has_space {
                 println!("[GOCAPL] Reusing (from active_pages) page L{}P{}.", active_page_entry.level, active_page_entry.page_id);
@@ -139,7 +139,7 @@ impl TimeHierarchyManager {
                 // 2. Page must not be full.
                 if loaded_page.creation_timestamp == window_start &&
                    loaded_page.end_time == (window_start + level_config.duration()) && // Ensure window matches calculated one
-                   (loaded_page.content_len()) < self.config.rollup.max_leaves_per_page {
+                   (loaded_page.content_len()) < self.config.time_hierarchy.levels[0].rollup_config.max_items_per_page {
                     
                     // Page is suitable for reuse.
                     // The caller (add_leaf) will handle inserting this into active_pages after modification.
@@ -187,11 +187,10 @@ impl TimeHierarchyManager {
             if triggering_timestamp >= active_page_entry.creation_timestamp && triggering_timestamp < active_page_entry.end_time {
                 // Found an active page for this level and time window.
                 // Check if it's full.
-                let _level_config = self.config.time_hierarchy.levels.get(parent_level_idx as usize)
-                    .ok_or_else(|| CJError::ConfigError(crate::config::ConfigError::ValidationError(format!("Time hierarchy level {} not configured.", parent_level_idx))))?;
-                
-                // For parent pages, max_items is from rollup config, not per-level config (which might not exist or apply here)
-                if active_page_entry.content_len() < self.config.rollup.max_leaves_per_page {
+                let level_config = self.config.time_hierarchy.levels.get(parent_level_idx as usize)
+                .ok_or_else(|| CJError::ConfigError(crate::config::ConfigError::ValidationError(format!("Time hierarchy level {} not configured.", parent_level_idx))))?;
+            
+            if active_page_entry.content_len() < level_config.rollup_config.max_items_per_page {
                     return Ok(active_page_entry.value().clone());
                 }
                 // If full, we'll fall through to create a new one, and the full one should have been finalized by a previous step.
@@ -229,7 +228,7 @@ impl TimeHierarchyManager {
             .ok_or_else(|| CJError::ConfigError(crate::config::ConfigError::ValidationError(format!("Time hierarchy level {} not configured.", page.level))))?;
 
         let mut should_finalize = false;
-        let max_items = level_config.rollup_config.max_leaves_per_page;
+        let max_items = level_config.rollup_config.max_items_per_page; // Updated from max_leaves_per_page
         let max_age_seconds = level_config.rollup_config.max_page_age_seconds;
 
         // Check for item limit
@@ -276,13 +275,52 @@ impl TimeHierarchyManager {
             self.last_finalized_page_hashes.insert(page_to_store.level, page_to_store.page_hash);
             self.active_pages.remove(&(page.level));
         println!("[ADD_LEAF] Removed L{}P{} from active_pages due to finalization.", page.level, page.page_id);
-            self.perform_rollup(page_to_store.level, page_to_store.page_hash, page_to_store.end_time).await?;
+            self.perform_rollup(page_to_store.level, page_to_store.page_hash, leaf.timestamp).await?;
         } else {
             // Page is not yet full/finalized, it remains in active_pages for further leaf additions.
             // No immediate storage write unless a specific strategy dictates otherwise (e.g. periodic flush).
         }
 
         println!("[ADD_LEAF] Finished for leaf ts: {}. Active pages for L0: {:?}", leaf.timestamp, self.active_pages.get(&0u8).map(|p| (p.value().page_id, p.value().content_len())));
+        Ok(())
+    }
+
+    /// Triggers a special rollup for Level 0, finalizing the currently active L0 page.
+    /// This is used for events that require an immediate checkpoint of L0 data.
+    pub async fn trigger_special_rollup(&self, event_timestamp: DateTime<Utc>) -> Result<(), CJError> {
+        println!("[SPECIAL_ROLLUP] Triggered for event_timestamp: {}", event_timestamp);
+        const LEVEL_0: u8 = 0;
+
+        if let Some(active_l0_page_entry_guard) = self.active_pages.get(&LEVEL_0) {
+            let page_to_finalize_clone = active_l0_page_entry_guard.value().clone();
+            drop(active_l0_page_entry_guard); // Release read lock before attempting to remove or call async methods that might re-lock
+
+            let mut page_to_finalize = page_to_finalize_clone;
+
+            if page_to_finalize.is_content_empty() {
+                println!("[SPECIAL_ROLLUP] Active L0 page L{}P{} is empty, but will be finalized due to special event.", page_to_finalize.level, page_to_finalize.page_id);
+            }
+        
+            page_to_finalize.recalculate_merkle_root_and_page_hash();
+
+            println!("[SPECIAL_ROLLUP] Finalizing L0 page L{}P{} due to special event. Content len: {}", page_to_finalize.level, page_to_finalize.page_id, page_to_finalize.content_len());
+
+            self.storage.store_page(&page_to_finalize).await?;
+            self.last_finalized_page_ids.insert(LEVEL_0, page_to_finalize.page_id);
+            self.last_finalized_page_hashes.insert(LEVEL_0, page_to_finalize.page_hash);
+        
+            self.active_pages.remove(&LEVEL_0);
+        
+            println!("[SPECIAL_ROLLUP] Removed L0P{} from active_pages.", page_to_finalize.page_id);
+
+            self.perform_rollup(LEVEL_0, page_to_finalize.page_hash, event_timestamp).await?;
+        
+            println!("[SPECIAL_ROLLUP] Completed for L0P{}.", page_to_finalize.page_id);
+
+        } else {
+            println!("[SPECIAL_ROLLUP] No active L0 page found to finalize for event_timestamp: {}. This may be normal.", event_timestamp);
+        }
+
         Ok(())
     }
 
@@ -326,192 +364,237 @@ impl TimeHierarchyManager {
     }
 
 
-    async fn perform_rollup(&self, finalized_page_level: u8, finalized_page_hash: [u8; 32], finalized_page_end_time: DateTime<Utc>) -> Result<(), CJError> {
+    async fn perform_rollup(&self, finalized_page_level: u8, finalized_page_hash: [u8; 32], original_trigger_timestamp: DateTime<Utc>) -> Result<(), CJError> {
         let parent_level_idx = finalized_page_level + 1;
 
         // Check if the parent level exists in the configuration
-        if self.config.time_hierarchy.levels.get(parent_level_idx as usize).is_none() {
+        // Load the finalized child page from storage to access its content/details
+    let loaded_child_page = match self.storage.load_page_by_hash(finalized_page_hash).await? {
+        Some(page) => page,
+        None => {
+            // This case should ideally not happen if page_hash is valid and from a stored page.
+            // However, if it does, we might log an error and stop the rollup for this path.
+            eprintln!("perform_rollup: Failed to load child page with hash {:?}. Stopping rollup for this branch.", finalized_page_hash);
+            // Consider returning a specific error or just Ok(()) if this is a recoverable scenario for the system.
+            return Err(CJError::StorageError(format!("Failed to load child page with hash {:?} for rollup", finalized_page_hash)));
+        }
+    };
+
+    let parent_level_config = match self.config.time_hierarchy.levels.get(parent_level_idx as usize) {
+        Some(config) => config,
+        None => {
             // Finalized page was at the highest configured level, so no further rollup.
             return Ok(());
         }
+    };
 
-        let mut parent_page = self.get_or_create_active_parent_page(parent_level_idx, finalized_page_end_time).await?;
-        parent_page.add_thrall_hash(finalized_page_hash, finalized_page_end_time);
-        parent_page.recalculate_merkle_root_and_page_hash();
+
+        let mut parent_page = self.get_or_create_active_parent_page(parent_level_idx, original_trigger_timestamp).await?;
+
+    // The timestamp to associate with the child's content in the parent page.
+    // This should be derived from the child page's actual content range.
+    let child_content_timestamp_for_parent = loaded_child_page.last_child_ts
+        .unwrap_or(loaded_child_page.creation_timestamp); // Fallback if last_child_ts is None (e.g. empty L0 page that aged out)
+
+    match parent_level_config.rollup_config.content_type {
+        RollupContentType::ChildHashes => {
+            parent_page.add_thrall_hash(loaded_child_page.page_hash, child_content_timestamp_for_parent);
+        }
+        RollupContentType::NetPatches => {
+            match loaded_child_page.content {
+                PageContent::NetPatches(child_patches) => {
+                    if !child_patches.is_empty() { // Only merge if there's something to merge
+                        parent_page.merge_net_patches(child_patches, child_content_timestamp_for_parent);
+                    }
+                }
+                PageContent::Leaves(leaves) => {
+                    // This is the case for L0 -> L1 (NetPatches).
+                    // We need to convert L0 leaves into a NetPatch representation.
+                    // This logic might be complex and depends on how leaves map to ObjectIDs/Fields.
+                    // For now, we'll log a warning and skip, or assume a transformation function exists.
+                    // TODO: Implement L0 leaves to NetPatches transformation if L1 is NetPatches.
+                    eprintln!("Warning: Rolling up L0 PageContent::Leaves into L1 PageContent::NetPatches is not fully implemented. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
+                    // If no transformation, the parent page might remain empty of this child's content.
+                }
+                PageContent::ThrallHashes(_) => {
+                    // Rolling up a ChildHashes page into a NetPatches page is problematic.
+                    // This implies a misconfiguration or an unsupported rollup path.
+                    eprintln!("Error: Cannot roll up PageContent::ThrallHashes into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
+                    // Potentially return an error or skip adding content.
+                }
+            }
+        }
+    }
+    parent_page.recalculate_merkle_root_and_page_hash();
         // Determine if this parent page itself needs to be finalized.
-        let mut should_finalize_parent = false;
-        let max_items_parent = self.config.rollup.max_leaves_per_page;
-        if parent_page.content_len() >= max_items_parent && !parent_page.is_content_empty() {
-            should_finalize_parent = true;
-        }
+    let max_items_parent = parent_level_config.rollup_config.max_items_per_page;
+    let oldest_content_ts_in_parent = parent_page.first_child_ts.unwrap_or(parent_page.creation_timestamp);
+    let parent_page_age_seconds = (original_trigger_timestamp - oldest_content_ts_in_parent).num_seconds();
+    let max_age_parent_seconds = parent_level_config.rollup_config.max_page_age_seconds;
 
-        // Check max_page_age_seconds for the parent page.
-        // The 'age' is relative to its own creation_timestamp and the timestamp of the latest content added (finalized_page_end_time).
-        let parent_page_age_seconds = (finalized_page_end_time - parent_page.creation_timestamp).num_seconds();
-        if parent_page_age_seconds >= self.config.rollup.max_page_age_seconds as i64 && !parent_page.is_content_empty() {
-            should_finalize_parent = true;
-        }
-        
-        // Always update the active_pages map with the potentially modified parent page, unless it's being finalized immediately.
-        if !should_finalize_parent {
-            self.active_pages.insert(parent_level_idx, parent_page.clone());
-        }
+    let is_full_by_items = parent_page.content_len() >= max_items_parent;
+    let is_over_age = parent_page_age_seconds >= max_age_parent_seconds as i64;
 
-        if should_finalize_parent {
-            let parent_page_to_store = parent_page.clone(); // Clone before moving to storage
+    // A page should be considered for finalization if it's full or over age.
+    // However, it's only *actually* finalized if it also has content.
+    // An empty page that is over age is handled by discard logic.
+
+    if is_full_by_items || is_over_age {
+        if parent_page.is_content_empty() && is_over_age && !is_full_by_items {
+            // EMPTY PAGE DISCARD LOGIC:
+            // Finalized solely due to Max Page Age AND has no content.
+            println!("perform_rollup: Discarding empty page {} at level {} due to age. Original trigger: {:?}, Page creation: {:?}, First child_ts: {:?}", 
+                parent_page.page_id, parent_level_idx, original_trigger_timestamp, parent_page.creation_timestamp, parent_page.first_child_ts);
+            
+            // Ensure it's removed from active_pages if it was ever added (e.g. if get_or_create returned an existing one that became empty)
+            self.active_pages.remove(&parent_level_idx);
+            
+            // Do not store, do not update last_finalized_*, do not recurse.
+            return Ok(());
+        } else if !parent_page.is_content_empty() {
+            // NORMAL FINALIZATION (full or over age, and has content):
+            let parent_page_to_store = parent_page.clone(); 
             self.storage.store_page(&parent_page_to_store).await?;
             self.last_finalized_page_ids.insert(parent_level_idx, parent_page_to_store.page_id);
             self.last_finalized_page_hashes.insert(parent_level_idx, parent_page_to_store.page_hash);
             self.active_pages.remove(&parent_level_idx); // Remove from active as it's now finalized
+            
             // Recursive call for the next level up
-            Box::pin(self.perform_rollup(parent_level_idx, parent_page_to_store.page_hash, parent_page_to_store.end_time)).await?;
+            Box::pin(self.perform_rollup(parent_level_idx, parent_page_to_store.page_hash, original_trigger_timestamp)).await?;
+        } else {
+            // Page is empty, but not solely due to age (e.g. it's empty AND full_by_items - which is contradictory, implies 0 max_items)
+            // Or it's empty and not over_age. In this case, it's not finalized yet.
+            // Keep it in active_pages.
+            self.active_pages.insert(parent_level_idx, parent_page.clone());
         }
-
-        Ok(())
+    } else {
+        // Not full and not over age: update active_pages map with the potentially modified parent page.
+        self.active_pages.insert(parent_level_idx, parent_page.clone());
     }
 
-    /// Applies retention policies to delete old pages based on configuration.
-    pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
-        let now = chrono::Utc::now();
-        println!("[Retention] Applying per-level policies at {}.
-", now);
+    Ok(())
+}
 
-        for (level_idx, level_config) in self.config.time_hierarchy.levels.iter().enumerate() {
-            let level = level_idx as u8;
-            println!("[Retention] Processing L{} ({})
-", level, level_config.name);
+/// Applies retention policies to pages based on configuration.
+async fn apply_retention_policies(&self) -> Result<(), CJError> {
+    let now = Utc::now();
+    println!("[Retention] Applying retention policies with current time: {:?}", now);
 
-            let effective_policy = match &level_config.retention_policy {
-                Some(specific_policy) => {
-                    println!("[Retention] L{}: Using specific policy: {:?}
-", level, specific_policy);
-                    specific_policy.clone()
-                }
-                None => {
-                    if self.config.retention.enabled && self.config.retention.period_seconds > 0 {
-                        println!("[Retention] L{}: No specific policy, using global: DeleteAfterSecs({}).
-", level, self.config.retention.period_seconds);
-                        RollupRetentionPolicy::DeleteAfterSecs(self.config.retention.period_seconds)
-                    } else {
-                        println!("[Retention] L{}: No specific policy, global retention disabled or period is 0. Defaulting to KeepIndefinitely.
-", level);
-                        RollupRetentionPolicy::KeepIndefinitely
-                    }
-                }
-            };
+    for (level_idx, level_config) in self.config.time_hierarchy.levels.iter().enumerate() {
+        let level = level_idx as u8;
+        println!("[Retention] Processing L{} ({})", level, level_config.name);
 
-            match effective_policy {
-                RollupRetentionPolicy::KeepIndefinitely => {
-                    println!("[Retention] L{}: Policy is KeepIndefinitely. No pages will be deleted.
-", level);
+        let effective_policy = match &level_config.retention_policy {
+            Some(specific_policy) => {
+                println!("[Retention] L{}: Using specific policy: {:?}", level, specific_policy);
+                specific_policy.clone()
+            }
+            None => {
+                if self.config.retention.enabled && self.config.retention.period_seconds > 0 {
+                    println!("[Retention] L{}: No specific policy, using global: DeleteAfterSecs({}).", level, self.config.retention.period_seconds);
+                    RollupRetentionPolicy::DeleteAfterSecs(self.config.retention.period_seconds)
+                } else {
+                    println!("[Retention] L{}: No specific policy, global retention disabled or period is 0. Defaulting to KeepIndefinitely.", level);
+                    RollupRetentionPolicy::KeepIndefinitely
                 }
-                RollupRetentionPolicy::DeleteAfterSecs(secs) => {
-                    if secs == 0 {
-                        println!("[Retention] L{}: Policy is DeleteAfterSecs(0). Skipping as this implies immediate deletion or misconfiguration.
-", level);
+            }
+        };
+
+        match effective_policy {
+            RollupRetentionPolicy::KeepIndefinitely => {
+                println!("[Retention] L{}: Policy is KeepIndefinitely. No pages will be deleted.", level);
+            }
+            RollupRetentionPolicy::DeleteAfterSecs(secs) => {
+                if secs == 0 {
+                    println!("[Retention] L{}: Policy is DeleteAfterSecs(0). Skipping as this implies immediate deletion or misconfiguration.", level);
+                    continue;
+                }
+                let retention_duration = chrono::Duration::seconds(secs as i64);
+                println!("[Retention] L{}: Policy is DeleteAfterSecs({}s). Max age: {}.", level, secs, retention_duration);
+
+                let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
+                    Ok(summaries) => summaries,
+                    Err(e) => {
+                        eprintln!("[Retention] L{}: Error listing finalized pages: {}. Skipping level.", level, e);
                         continue;
                     }
-                    let retention_duration = chrono::Duration::seconds(secs as i64);
-                    println!("[Retention] L{}: Policy is DeleteAfterSecs({}s). Max age: {}.
-", level, secs, retention_duration);
+                };
 
-                    let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
-                        Ok(summaries) => summaries,
-                        Err(e) => {
-                            eprintln!("[Retention] L{}: Error listing finalized pages: {}. Skipping level.
-", level, e);
-                            continue;
-                        }
-                    };
-
-                    if page_summaries.is_empty() {
-                        println!("[Retention] L{}: No finalized pages found.
-", level);
-                        continue;
-                    }
-                    println!("[Retention] L{}: Found {} finalized pages.
-", level, page_summaries.len());
-
-                    for summary in page_summaries {
-                        if summary.end_time > now {
-                            println!("[Retention] L{}/{}: Skipping, end_time {} is in the future.
-", level, summary.page_id, summary.end_time);
-                            continue;
-                        }
-                        let page_age = now.signed_duration_since(summary.end_time);
-                        if page_age > retention_duration {
-                            println!("[Retention] L{}/{}: Deleting (end_time: {}, age: {}s)
-", level, summary.page_id, summary.end_time, page_age.num_seconds());
-                            if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
-                                eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.
-", level, summary.page_id, e);
-                            }
-                        }
-                    }
+                if page_summaries.is_empty() {
+                    println!("[Retention] L{}: No finalized pages found.", level);
+                    continue;
                 }
-                RollupRetentionPolicy::KeepNPages(n) => {
-                    if n == 0 {
-                        println!("[Retention] L{}: Policy is KeepNPages(0). Deleting all pages.
-", level);
-                        let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
-                            Ok(summaries) => summaries,
-                            Err(e) => {
-                                eprintln!("[Retention] L{}: Error listing for KeepNPages(0): {}. Skipping.
-", level, e);
-                                continue;
-                            }
-                        };
-                        for summary in page_summaries {
-                            println!("[Retention] L{}/{}: Deleting (KeepNPages(0))
-", level, summary.page_id);
-                            if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
-                                eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.
-", level, summary.page_id, e);
-                            }
-                        }
+                println!("[Retention] L{}: Found {} finalized pages.", level, page_summaries.len());
+
+                for summary in page_summaries {
+                    if summary.end_time > now {
+                        println!("[Retention] L{}/{}: Skipping, end_time {} is in the future.", level, summary.page_id, summary.end_time);
                         continue;
                     }
-
-                    println!("[Retention] L{}: Policy is KeepNPages({}).
-", level, n);
-                    let mut page_summaries = match self.storage.list_finalized_pages_summary(level).await {
-                        Ok(summaries) => summaries,
-                        Err(e) => {
-                            eprintln!("[Retention] L{}: Error listing finalized pages: {}. Skipping level.
-", level, e);
-                            continue;
-                        }
-                    };
-
-                    if page_summaries.len() <= n {
-                        println!("[Retention] L{}: Found {} pages, which is <= {}. No pages will be deleted.
-", level, page_summaries.len(), n);
-                        continue;
-                    }
-
-                    page_summaries.sort_unstable_by_key(|s| s.end_time);
-
-                    let num_to_delete = page_summaries.len() - n;
-                    println!("[Retention] L{}: Found {} pages. Deleting {} oldest pages to keep {}.
-", level, page_summaries.len(), num_to_delete, n);
-
-                    for summary_to_delete in page_summaries.iter().take(num_to_delete) {
-                        println!("[Retention] L{}/{}: Deleting (KeepNPages, end_time: {})
-", level, summary_to_delete.page_id, summary_to_delete.end_time);
-                        if let Err(e) = self.storage.delete_page(level, summary_to_delete.page_id).await {
-                            eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.
-", level, summary_to_delete.page_id, e);
+                    let page_age = now.signed_duration_since(summary.end_time);
+                    if page_age > retention_duration {
+                        println!("[Retention] L{}/{}: Deleting (end_time: {}, age: {}s)", level, summary.page_id, summary.end_time, page_age.num_seconds());
+                        if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
+                            eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary.page_id, e);
                         }
                     }
                 }
             }
-        }
-        println!("[Retention] Per-level policies application complete.
-");
-        Ok(())
-    }
-}
+            RollupRetentionPolicy::KeepNPages(n) => {
+                if n == 0 {
+                    println!("[Retention] L{}: Policy is KeepNPages(0). Deleting all pages.", level);
+                    let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
+                        Ok(summaries) => summaries,
+                        Err(e) => {
+                            eprintln!("[Retention] L{}: Error listing for KeepNPages(0): {}. Skipping.", level, e);
+                            continue; // Skip to next level if error listing pages
+                        }
+                    };
+                    for summary in page_summaries {
+                        println!("[Retention] L{}/{}: Deleting (KeepNPages(0))", level, summary.page_id);
+                        if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
+                            eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary.page_id, e);
+                        }
+                    }
+                    continue; // Skip to next level after processing KeepNPages(0)
+                }
 
+                // Logic for n > 0
+                println!("[Retention] L{}: Policy is KeepNPages({}).", level, n);
+                let mut page_summaries = match self.storage.list_finalized_pages_summary(level).await {
+                    Ok(summaries) => summaries,
+                    Err(e) => {
+                        eprintln!("[Retention] L{}: Error listing finalized pages for KeepNPages({}): {}. Skipping level.", level, n, e);
+                        continue; // Skip to next level if error listing pages
+                    }
+                };
+
+                if page_summaries.len() <= n {
+                    println!("[Retention] L{}: Found {} pages, which is <= {}. No pages will be deleted.", level, page_summaries.len(), n);
+                    // continue; // No, don't continue here, just fall through to end of match arm
+                } else {
+                    // Sort pages by end_time (oldest first) to identify which ones to delete
+                    page_summaries.sort_unstable_by_key(|s| s.end_time);
+                    
+                    let num_to_delete = page_summaries.len() - n;
+                    println!("[Retention] L{}: Found {} pages. Deleting {} oldest pages to keep {}.", level, page_summaries.len(), num_to_delete, n);
+
+                    for summary_to_delete in page_summaries.iter().take(num_to_delete) {
+                        println!("[Retention] L{}/{}: Deleting (KeepNPages, end_time: {})", level, summary_to_delete.page_id, summary_to_delete.end_time);
+                        if let Err(e) = self.storage.delete_page(level, summary_to_delete.page_id).await {
+                            eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary_to_delete.page_id, e);
+                        }
+                    }
+                }
+            } // Closes RollupRetentionPolicy::KeepNPages(n) arm
+        } // Closes match effective_policy
+    } // Closes for (level_idx, level_config)
+
+    println!("[Retention] Per-level policies application complete.");
+    Ok(())
+} // Closes async fn apply_retention_policies
+
+} // Closes impl TimeHierarchyManager
 
 #[cfg(test)]
 mod tests {

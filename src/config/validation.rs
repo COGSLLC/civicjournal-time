@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use super::{
     Config,
-    RollupConfig, TimeHierarchyConfig,
+    TimeHierarchyConfig,
 };
 use crate::error::CJError;
 use super::error::ConfigError; // For return types in validation functions
@@ -25,11 +25,9 @@ use crate::StorageType;      // For StorageType enum used in tests
 ///
 /// Returns a `ConfigError` if any validation check fails.
 pub fn validate_config(config: &Config) -> Result<(), CJError> {
-    // Validate time hierarchy first as other validations depend on it
+    // Validate time hierarchy first as other validations depend on it. 
+    // This now includes per-level rollup validation.
     validate_time_hierarchy(&config.time_hierarchy)?;
-    
-    // Validate rollup configuration against time hierarchy
-    validate_rollup_config(&config.rollup, &config.time_hierarchy)?;
     
     // Validate storage configuration
     validate_storage_config(&config.storage)?;
@@ -53,33 +51,7 @@ pub fn validate_config(config: &Config) -> Result<(), CJError> {
 }
 
 // Original simpler validate_time_hierarchy function removed (was lines 55-65)
-
-/// Validates the rollup configuration.
-fn validate_rollup_config(
-    config: &RollupConfig,
-    _time_hierarchy: &TimeHierarchyConfig, // time_hierarchy might be needed for future, more complex cross-validation
-) -> Result<(), CJError> {
-    if config.max_leaves_per_page == 0 {
-        return Err(ConfigError::invalid_value(
-            "rollup.max_leaves_per_page",
-            config.max_leaves_per_page,
-            "max_leaves_per_page must be greater than 0"
-        ).into());
-    }
-
-    if config.max_page_age_seconds == 0 {
-        return Err(ConfigError::invalid_value(
-            "rollup.max_page_age_seconds",
-            config.max_page_age_seconds,
-            "max_page_age_seconds must be greater than 0"
-        ).into());
-    }
-    
-    // Further validation for rollup config can be added here if necessary.
-    // For instance, ensuring max_page_age_seconds is reasonable in context of time hierarchy levels,
-    // but that would require more specific rules.
-    Ok(())
-}
+// validate_rollup_config function removed as its logic is now integrated into validate_time_hierarchy.
 
 /// Validates the storage configuration.
 fn validate_storage_config(config: &super::StorageConfig) -> Result<(), CJError> {
@@ -415,7 +387,7 @@ fn validate_cross_section(config: &Config) -> Result<(), CJError> {
     Ok(())
 }
 
-/// Validate time hierarchy configuration
+/// Validate time hierarchy configuration, including per-level rollup configurations.
 fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> {
     if config.levels.is_empty() {
         return Err(ConfigError::validation_error("Time hierarchy must have at least one level").into());
@@ -423,32 +395,55 @@ fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> 
 
     // Check for duplicate level names
     let mut names = HashSet::new();
-    for level in &config.levels {
+    for (i, level) in config.levels.iter().enumerate() {
+        // Check for duplicate level names
         if !names.insert(&level.name) {
             return Err(ConfigError::validation_error(format!("Duplicate time level name: {}", level.name)).into());
         }
-        if level.duration_seconds == 0 {
-            return Err(ConfigError::validation_error(format!("Duration for level {} must be greater than 0", level.name)).into());
-        }
-    }
 
-    // Check that levels are in ascending order of duration
-    for i in 1..config.levels.len() {
-        if config.levels[i].duration_seconds <= config.levels[i - 1].duration_seconds {
-            return Err(ConfigError::validation_error(format!(
-                "Time level durations must be in ascending order. Found {} after {}",
-                config.levels[i].duration_seconds,
-                config.levels[i - 1].duration_seconds
-            )).into());
+        // Ensure duration is greater than 0
+        if level.duration_seconds == 0 {
+            return Err(ConfigError::invalid_value(
+                &format!("time_hierarchy.levels[{}].duration_seconds", i),
+                level.duration_seconds,
+                "Duration must be greater than 0"
+            ).into());
         }
+
+        // Ensure durations are strictly ascending (for levels after the first)
+        if i > 0 {
+            // config.levels is guaranteed to have at least one element if we reach here,
+            // and config.levels[i-1] is safe due to the loop condition.
+            if level.duration_seconds <= config.levels[i - 1].duration_seconds {
+                return Err(ConfigError::invalid_value(
+                    &format!("time_hierarchy.levels[{}].duration_seconds", i),
+                    level.duration_seconds,
+                    "Duration must be greater than the previous level's duration"
+                ).into());
+            }
+        }
+
+        // Validate per-level rollup config
+        if level.rollup_config.max_items_per_page == 0 {
+            return Err(ConfigError::invalid_value(
+                &format!("time_hierarchy.levels[{}].rollup_config.max_items_per_page", i),
+                level.rollup_config.max_items_per_page,
+                "max_items_per_page must be greater than 0"
+            ).into());
+        }
+
+        if level.rollup_config.max_page_age_seconds == 0 {
+            return Err(ConfigError::invalid_value(
+                &format!("time_hierarchy.levels[{}].rollup_config.max_page_age_seconds", i),
+                level.rollup_config.max_page_age_seconds,
+                "max_page_age_seconds must be greater than 0"
+            ).into());
+        }
+        // TODO: Add validation for content_type consistency if needed, e.g., L0 usually ChildHashes or NetPatches, higher levels usually ChildHashes.
     }
 
     Ok(())
 }
-
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

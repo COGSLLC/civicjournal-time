@@ -111,6 +111,26 @@ pub trait StorageBackend: Send + Sync + std::fmt::Debug + 'static {
     /// # Returns
     /// An `Option<JournalLeaf>` which is `Some` if the leaf is found, or `None` otherwise.
     ///
+    /// Loads a specific journal page by its hash from the backend.
+    ///
+    /// # Arguments
+    /// * `page_hash` - The SHA256 hash of the page to retrieve.
+    ///
+    /// # Returns
+    /// An `Option<JournalPage>` which is `Some` if the page is found, or `None` otherwise.
+    ///
+    /// # Errors
+    /// Returns a `CJError` if there's an issue accessing the storage.
+    async fn load_page_by_hash(&self, page_hash: [u8; 32]) -> Result<Option<JournalPage>, CJError>;
+
+    /// Loads a specific journal leaf by its hash from the backend.
+    ///
+    /// # Arguments
+    /// * `leaf_hash` - The SHA256 hash of the leaf to retrieve.
+    ///
+    /// # Returns
+    /// An `Option<JournalLeaf>` which is `Some` if the leaf is found, or `None` otherwise.
+    ///
     /// # Errors
     /// Returns a `CJError` if there's an issue accessing the storage.
     async fn load_leaf_by_hash(&self, leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, CJError>;

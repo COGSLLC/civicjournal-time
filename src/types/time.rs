@@ -13,6 +13,19 @@ pub enum RollupRetentionPolicy {
     KeepNPages(usize),
 }
 
+/// Defines the content type for rolled-up pages (L_N > 0).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RollupContentType {
+    ChildHashes, // Represents rolled-up content as a list of Merkle hashes of child pages
+    NetPatches,  // Represents rolled-up content as a net state patch (ObjectID -> Field -> Value)
+}
+
+impl Default for RollupContentType {
+    fn default() -> Self {
+        RollupContentType::ChildHashes // Default to existing behavior
+    }
+}
+
 /// Represents a level in the time hierarchy, defining its duration and rollup behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)] // Added for TimeLevel
 pub struct TimeLevel {
@@ -21,7 +34,7 @@ pub struct TimeLevel {
     /// Duration of this time level in seconds
     pub duration_seconds: u64,
     /// Configuration for roll-up operations specific to this level.
-    pub rollup_config: RollupConfig,
+    pub rollup_config: LevelRollupConfig,
     /// Policy for retaining or deleting pages at this level after they've been rolled up.
     pub retention_policy: Option<RollupRetentionPolicy>,
 }
@@ -31,7 +44,7 @@ impl TimeLevel {
     pub fn new(
         name: impl Into<String>,
         duration_seconds: u64,
-        rollup_config: RollupConfig,
+        rollup_config: LevelRollupConfig,
         retention_policy: Option<RollupRetentionPolicy>,
     ) -> Self {
         Self {
@@ -59,36 +72,39 @@ impl Default for TimeHierarchyConfig {
     fn default() -> Self {
         Self {
             levels: vec![
-                TimeLevel::new("raw", 1, RollupConfig::default(), None), // Smallest duration, pages primarily finalize by count/age
-                TimeLevel::new("minute", 60, RollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
-                TimeLevel::new("hour", 3600, RollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
-                TimeLevel::new("day", 86400, RollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
-                TimeLevel::new("month", 2592000, RollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 30 days
-                TimeLevel::new("year", 31536000, RollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 365 days
-                TimeLevel::new("decade", 315360000, RollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 10 years
-                TimeLevel::new("century", 3153600000, RollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 100 years
+                TimeLevel::new("raw", 1, LevelRollupConfig::default(), None), // Smallest duration, pages primarily finalize by count/age
+                TimeLevel::new("minute", 60, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
+                TimeLevel::new("hour", 3600, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
+                TimeLevel::new("day", 86400, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
+                TimeLevel::new("month", 2592000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 30 days
+                TimeLevel::new("year", 31536000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 365 days
+                TimeLevel::new("decade", 315360000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 10 years
+                TimeLevel::new("century", 3153600000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 100 years
             ],
         }
     }
 }
 
-/// Configuration for roll-up operations
+/// Configuration for roll-up operations at a specific time level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RollupConfig {
-    /// Maximum number of leaves before forcing a roll-up
-    pub max_leaves_per_page: usize,
+pub struct LevelRollupConfig { // Renamed from RollupConfig
+    /// Maximum number of items (leaves for L0, child payloads for L_N>0) before forcing a roll-up
+    pub max_items_per_page: usize, // Renamed for clarity (was max_leaves_per_page)
     /// Maximum age of a page before it should be rolled up (in seconds)
     pub max_page_age_seconds: u64,
-    /// Whether to force roll-up operations on shutdown
-    pub force_rollup_on_shutdown: bool,
+    /// Type of content to store in L_N > 0 pages for this level's parent
+    /// (or how this level's pages are represented in its parent)
+    pub content_type: RollupContentType, // New field
+    // force_rollup_on_shutdown has been removed from per-level config.
+    // It should be a global setting if needed.
 }
 
-impl Default for RollupConfig {
+impl Default for LevelRollupConfig {
     fn default() -> Self {
         Self {
-            max_leaves_per_page: 1000,
+            max_items_per_page: 1000,
             max_page_age_seconds: 3600, // 1 hour
-            force_rollup_on_shutdown: true,
+            content_type: RollupContentType::default(),
         }
     }
 }

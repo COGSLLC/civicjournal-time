@@ -152,6 +152,15 @@ impl StorageBackend for MemoryStorage {
         Err(CJError::not_supported("restore_journal is not implemented for MemoryStorage".to_string()))
     }
 
+    async fn load_page_by_hash(&self, page_hash: [u8; 32]) -> Result<Option<JournalPage>, CJError> {
+        for entry in self.pages.iter() {
+            if entry.value().page_hash == page_hash {
+                return Ok(Some(entry.value().clone()));
+            }
+        }
+        Ok(None)
+    }
+
     async fn load_leaf_by_hash(&self, leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, CJError> {
         for entry in self.pages.iter() {
             let page = entry.value();

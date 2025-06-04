@@ -83,6 +83,15 @@ impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
                             // found_leaf_in_page_contents will remain false.
                             leaf_hashes_in_page.extend(hashes.iter().cloned());
                         }
+                        crate::core::page::PageContent::NetPatches(net_patches_content) => {
+                            // L0 pages should ideally only contain Leaves. NetPatches here is unexpected.
+                            eprintln!(
+                                "[QueryEngine] Warning: Encountered PageContent::NetPatches in L0 page (ID: {}) during find_leaf_proof. This is unexpected for L0.",
+                                page.page_id
+                            );
+                            // NetPatches content (Vec<u8>) doesn't directly provide leaf hashes for Merkle proof of a *JournalLeaf*.
+                            // found_leaf_in_page_contents will remain false, so this page won't be considered to contain the target leaf.
+                        }
                     }
 
                     if found_leaf_in_page_contents {
