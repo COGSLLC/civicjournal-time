@@ -98,7 +98,7 @@ pub struct LeafDataV1 {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import for test synchronization
+    use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import for test synchronization
     use super::*; // Imports JournalLeaf and its methods
     use chrono::Utc;
     use serde_json::json;

@@ -15,7 +15,7 @@ pub type MerkleRoot = [u8; 32];
 
 /// Atomic counter for generating unique page IDs.
 /// Public for testing purposes to allow resetting the counter.
-pub(crate) static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
+pub static NEXT_PAGE_ID: AtomicU64 = AtomicU64::new(0);
 
 use std::collections::HashMap;
 
@@ -180,9 +180,11 @@ impl JournalPage {
         }
         match self.content {
             PageContent::ThrallHashes(ref mut hashes) => {
-                if self.first_child_ts.is_none() || content_timestamp < self.first_child_ts.unwrap() {
+                println!("[ADD_THRALL_HASH_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
+                if self.first_child_ts.is_none() {
                     self.first_child_ts = Some(content_timestamp);
                 }
+                println!("[ADD_THRALL_HASH_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
                 if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
                     self.last_child_ts = Some(content_timestamp);
                 }
@@ -208,9 +210,11 @@ impl JournalPage {
                     }
                 }
 
-                if self.first_child_ts.is_none() || content_timestamp < self.first_child_ts.unwrap() {
+                println!("[MERGE_NET_PATCHES_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
+                if self.first_child_ts.is_none() {
                     self.first_child_ts = Some(content_timestamp);
                 }
+                println!("[MERGE_NET_PATCHES_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
                 if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
                     self.last_child_ts = Some(content_timestamp);
                 }
@@ -325,25 +329,26 @@ mod tests {
 
     // Removed local PAGE_TEST_MUTEX, lazy_static, and unused Mutex/Ordering imports
 
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, RollupConfig}; // Renamed to avoid conflict
-    use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel}; // Renamed to avoid conflict
+    use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
 
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
+    use crate::types::time::{TimeLevel, LevelRollupConfig}; // TimeHierarchyConfig removed, already imported
     use crate::StorageType;
 
     fn get_test_config() -> Config {
         Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
-                    TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                    TimeLevel {
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
-                    TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                    TimeLevel {
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
-            rollup: Default::default(),
+            force_rollup_on_shutdown: false,
             storage: StorageConfig { storage_type: StorageType::Memory, base_path: "./cjtmp_page_test".to_string(), max_open_files: 100 },
             compression: CompressionConfig::default(),
             logging: LoggingConfig::default(),
@@ -392,11 +397,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_journal_page_hash_uniqueness() {
-        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        println!("[TEST-DEBUG] Starting test_journal_page_hash_uniqueness");
+        let _guard = crate::test_utils::acquire_test_mutex("test_journal_page_hash_uniqueness").await;
         reset_global_ids();
+        println!("[TEST-DEBUG] Creating pages with different timestamps");
         let now = Utc::now();
         let config = get_test_config();
+        println!("[TEST-DEBUG] Creating page1");
         let page1 = JournalPage::new(0, None, now, &config);
+        println!("[TEST-DEBUG] Creating page2");
         let page2 = JournalPage::new(0, None, now + Duration::seconds(10), &config);
         let page3 = JournalPage::new(1, None, now, &config);
         let page4 = JournalPage::new(0, Some([1u8; 32]), now, &config);

@@ -8,12 +8,8 @@ use crate::core::page::{JournalPage, JournalPageSummary, PageContent};
 use crate::core::leaf::JournalLeaf;
 use crate::error::CJError;
 use crate::storage::StorageBackend;
-use crate::config::{
-    Config, CompressionConfig, StorageConfig, LoggingConfig, MetricsConfig, RetentionConfig,
-};
-use crate::types::{
-    TimeHierarchyConfig, TimeLevel, LevelRollupConfig, StorageType, RollupRetentionPolicy,
-};
+use crate::config::CompressionConfig;
+use crate::LevelRollupConfig;
 use crate::CompressionAlgorithm;
 use serde::{Deserialize, Serialize};
 use chrono::Utc; // For backup_timestamp_utc
@@ -1185,26 +1181,27 @@ mod tests_to_merge {
     use chrono::{DateTime, Utc};
     use tempfile::tempdir;
     use crate::core::page::{JournalPage};
-    use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
+    use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
     
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
-    use crate::types::time::{RollupConfig, TimeLevel};
+    use crate::types::time::{TimeLevel};
     use crate::{StorageType, TimeHierarchyConfig, CompressionAlgorithm};
     use std::fs::File as StdFile; // For opening the backup zip file
 
     fn get_base_test_config() -> Config { 
         Config {
+            force_rollup_on_shutdown: false,
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
                     TimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
                     TimeLevel {
-                            rollup_config: RollupConfig::default(),
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
-            rollup: Default::default(),
+            // force_rollup_on_shutdown defaults to false in Config::default()
             // For file storage tests, we might still use Memory for config simplicity unless test needs file specifics
             storage: StorageConfig { storage_type: StorageType::Memory, base_path: "./cjtmp_file_test".to_string(), max_open_files: 100 }, 
             compression: CompressionConfig::default(),

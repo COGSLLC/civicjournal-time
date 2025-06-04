@@ -14,6 +14,9 @@ pub mod validation;
 #[path = "tests/validation_tests.rs"]
 mod validation_tests;
 
+// Publicly re-export key configuration types from the types module
+pub use crate::types::time::{LevelRollupConfig, TimeHierarchyConfig, TimeLevel};
+
 use std::{
     env,
     fs,
@@ -27,9 +30,9 @@ use crate::{
     CompressionAlgorithm,
     LogLevel,
     StorageType,
-    LevelRollupConfig, // Changed from RollupConfig
-    TimeHierarchyConfig,
-    TimeLevel,
+    // LevelRollupConfig, // Removed, publicly re-exported above
+    // TimeHierarchyConfig, // Removed, publicly re-exported above
+    // TimeLevel, // Removed, publicly re-exported above
 };
 
 /// Re-export the error type

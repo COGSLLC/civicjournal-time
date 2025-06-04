@@ -14,6 +14,7 @@ use super::{
 use crate::error::CJError;
 use super::error::ConfigError; // For return types in validation functions
 use crate::StorageType;      // For StorageType enum used in tests
+use crate::LevelRollupConfig;
 
 /// Validates the application configuration.
 ///
@@ -457,7 +458,7 @@ mod tests {
         // Valid hierarchy
         let valid = TimeHierarchyConfig {
             levels: vec![TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                 name: "test".to_string(),
                 duration_seconds: 60,
@@ -473,13 +474,13 @@ mod tests {
         let duplicate = TimeHierarchyConfig {
             levels: vec![
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "test".to_string(),
                     duration_seconds: 60,
                 },
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "test".to_string(),
                     duration_seconds: 3600,
@@ -492,13 +493,13 @@ mod tests {
         let bad_order = TimeHierarchyConfig {
             levels: vec![
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "hour".to_string(),
                     duration_seconds: 3600,
                 },
                 TimeLevel {
-                    rollup_config: RollupConfig::default(),
+                    rollup_config: LevelRollupConfig::default(),
                     retention_policy: None,
                     name: "minute".to_string(),
                     duration_seconds: 60,

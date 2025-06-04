@@ -20,22 +20,4 @@ pub mod time_manager;
 // Shared items for testing, accessible within the crate.
 // Placed here to ensure they are compiled and accessible for all test modules within `core`.
 
-#[cfg(test)]
-use tokio::sync::Mutex;
-#[cfg(test)]
-use lazy_static::lazy_static;
-#[cfg(test)]
-use std::sync::atomic::Ordering;
 
-#[cfg(test)]
-lazy_static! {
-    pub(crate) static ref SHARED_TEST_ID_MUTEX: Mutex<()> = Mutex::new(());
-}
-
-#[cfg(test)] // Still want these items only compiled for test builds
-pub(crate) fn reset_global_ids() {
-    // These paths assume NEXT_PAGE_ID is pub(crate) in crate::core::page
-    // and NEXT_LEAF_ID is pub(crate) in crate::core::leaf
-    crate::core::page::NEXT_PAGE_ID.store(0, Ordering::SeqCst);
-    crate::core::leaf::NEXT_LEAF_ID.store(0, Ordering::SeqCst);
-}

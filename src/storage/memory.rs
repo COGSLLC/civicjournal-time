@@ -184,25 +184,25 @@ mod tests {
     use crate::core::page::JournalPage; // For creating dummy pages
     use chrono::{DateTime, Utc};
     // Removed Ordering as reset_global_ids handles it
-    use crate::core::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
+    use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test utilities
     use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
     use crate::{core::leaf::JournalLeaf, StorageType, core::page::PageContent};
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel as TypeTimeLevel, RollupConfig};
+    use crate::types::time::{TimeHierarchyConfig, TimeLevel, LevelRollupConfig, RollupContentType};
     use crate::core::leaf::{LeafData, LeafDataV1}; // Added missing imports
 
     fn get_test_config() -> Config {
         Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
-                    TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                    TimeLevel {
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "second".to_string(), duration_seconds: 1 },
-                    TypeTimeLevel {
-                            rollup_config: RollupConfig::default(),
+                    TimeLevel {
+                            rollup_config: LevelRollupConfig::default(),
                             retention_policy: None, name: "minute".to_string(), duration_seconds: 60 },
                 ]
             },
-            rollup: Default::default(),
+            force_rollup_on_shutdown: false,
             storage: StorageConfig { storage_type: StorageType::Memory, base_path: "./cjtmp_mem_test".to_string(), max_open_files: 100 },
             compression: CompressionConfig::default(),
             logging: LoggingConfig::default(),

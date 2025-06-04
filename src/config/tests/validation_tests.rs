@@ -1,6 +1,6 @@
 use crate::config::{
     CompressionAlgorithm, CompressionConfig, Config, LogLevel, LoggingConfig, RetentionConfig,
-    RollupConfig, StorageConfig, StorageType, TimeHierarchyConfig,
+    StorageConfig, StorageType, TimeHierarchyConfig,
 };
 use crate::error::CJError;
 use crate::config::validation::validate_config;
@@ -8,7 +8,7 @@ use crate::config::validation::validate_config;
 fn create_test_config() -> Config {
     Config {
         time_hierarchy: TimeHierarchyConfig::default(),
-        rollup: RollupConfig::default(),
+        force_rollup_on_shutdown: false, // Explicitly set, though defaults to false
         storage: StorageConfig {
             storage_type: StorageType::File,
             base_path: "./data".to_string(),

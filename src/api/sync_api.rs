@@ -51,7 +51,7 @@ impl Journal {
     /// Returns `CJError::PageNotFound` if the page does not exist.
     /// Returns `CJError::StorageError` if there was an issue loading from storage.
     pub fn get_page(&self, level: u8, page_id: u64) -> CJResult<JournalPage> {
-        match self.rt.block_on(self.manager.get_page_from_storage(level, page_id)) {
+        match self.rt.block_on(self.manager.load_page_from_storage(level, page_id)) {
             Ok(Some(page)) => Ok(page),
             Ok(None) => Err(CJError::PageNotFound { level, page_id }),
             Err(e) => {

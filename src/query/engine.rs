@@ -41,7 +41,7 @@ impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
         let mut level0_page_ids_to_check: Vec<u64> = Vec::new();
 
         // Collect active level 0 page ID
-        if let Some(active_page_id) = self.time_manager.get_current_active_page_id(0) {
+        if let Some(active_page_id) = self.time_manager.get_current_active_page_id(0).await {
             level0_page_ids_to_check.push(active_page_id);
         }
 
@@ -83,7 +83,7 @@ impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
                             // found_leaf_in_page_contents will remain false.
                             leaf_hashes_in_page.extend(hashes.iter().cloned());
                         }
-                        crate::core::page::PageContent::NetPatches(net_patches_content) => {
+                        crate::core::page::PageContent::NetPatches(_net_patches_content) => {
                             // L0 pages should ideally only contain Leaves. NetPatches here is unexpected.
                             eprintln!(
                                 "[QueryEngine] Warning: Encountered PageContent::NetPatches in L0 page (ID: {}) during find_leaf_proof. This is unexpected for L0.",
