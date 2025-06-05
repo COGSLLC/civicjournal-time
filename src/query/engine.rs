@@ -4,12 +4,15 @@
 //! including cryptographic proof generation and verification.
 
 use crate::query::types::{
-    QueryError, LeafInclusionProof,
+    QueryError, LeafInclusionProof, ReconstructedState, QueryPoint, DeltaReport,
+    PageIntegrityReport,
 };
 use crate::config::Config;
 use crate::storage::StorageBackend;
 use crate::core::time_manager::TimeHierarchyManager;
 use std::sync::Arc;
+use chrono::{DateTime, Utc};
+use serde_json::Value;
 
 /// The main query engine for executing complex queries against the journal.
 ///
@@ -18,11 +21,10 @@ use std::sync::Arc;
 /// storage backend that implements the `StorageBackend` trait.
 ///
 /// # Type Parameters
-/// * `S` - The storage backend implementation used to retrieve journal data
-#[derive(Clone)]
-pub struct QueryEngine<S: StorageBackend + Send + Sync + 'static> {
+#[derive(Clone, Debug)]
+pub struct QueryEngine {
     /// The storage backend used to retrieve journal pages
-    storage: Arc<S>,
+    storage: Arc<dyn StorageBackend>,
     
     /// The time hierarchy manager for locating pages in the time-based hierarchy
     time_manager: Arc<TimeHierarchyManager>,
@@ -31,7 +33,7 @@ pub struct QueryEngine<S: StorageBackend + Send + Sync + 'static> {
     _config: Arc<Config>,
 }
 
-impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
+impl QueryEngine {
     /// Creates a new `QueryEngine` with the specified storage, time manager, and configuration.
     ///
     /// # Arguments
@@ -39,7 +41,7 @@ impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
     /// * `time_manager` - The time hierarchy manager for locating pages
     /// * `config` - Application configuration
     pub fn new(
-        storage: Arc<S>,
+        storage: Arc<dyn StorageBackend>,
         time_manager: Arc<TimeHierarchyManager>,
         config: Arc<Config>,
     ) -> Self {
@@ -169,6 +171,147 @@ impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
         }
 
         Err(QueryError::LeafNotFound(*leaf_hash))
+    }
+
+    fn apply_delta(state: &mut Value, delta: &Value) {
+        match (state, delta) {
+            (Value::Object(b), Value::Object(p)) => {
+                for (k, v) in p {
+                    match b.get_mut(k) {
+                        Some(existing) => Self::apply_delta(existing, v),
+                        None => { b.insert(k.clone(), v.clone()); }
+                    }
+                }
+            }
+            (s, d) => *s = d.clone(),
+        }
+    }
+
+    pub async fn reconstruct_container_state(
+        &self,
+        container_id: &str,
+        at_timestamp: DateTime<Utc>,
+    ) -> Result<ReconstructedState, QueryError> {
+        let mut pages = self.storage.list_finalized_pages_summary(0).await?;
+        if let Some(active) = self.time_manager.get_current_active_page_id(0).await {
+            if let Ok(Some(p)) = self.storage.load_page(0, active).await {
+                pages.push(crate::core::page::JournalPageSummary {
+                    page_id: p.page_id,
+                    level: p.level,
+                    creation_timestamp: p.creation_timestamp,
+                    end_time: p.end_time,
+                    page_hash: p.page_hash,
+                });
+            }
+        }
+        pages.sort_by_key(|p| p.creation_timestamp);
+        let mut state = Value::Null;
+        let mut found = false;
+        for summary in pages {
+            if summary.creation_timestamp > at_timestamp { break; }
+            if let Ok(Some(page)) = self.storage.load_page(summary.level, summary.page_id).await {
+                if let crate::core::page::PageContent::Leaves(leaves) = page.content {
+                    for leaf in leaves {
+                        if leaf.timestamp > at_timestamp { break; }
+                        if leaf.container_id == container_id {
+                            Self::apply_delta(&mut state, &leaf.delta_payload);
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !found {
+            return Err(QueryError::ContainerNotFound(container_id.to_string()));
+        }
+        Ok(ReconstructedState { container_id: container_id.to_string(), at_point: QueryPoint::Timestamp(at_timestamp), state_data: state })
+    }
+
+    pub async fn get_delta_report(
+        &self,
+        container_id: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<DeltaReport, QueryError> {
+        if from > to { return Err(QueryError::InvalidParameters("from is after to".into())); }
+        let mut pages = self.storage.list_finalized_pages_summary(0).await?;
+        if let Some(active) = self.time_manager.get_current_active_page_id(0).await {
+            if let Ok(Some(p)) = self.storage.load_page(0, active).await {
+                pages.push(crate::core::page::JournalPageSummary {
+                    page_id: p.page_id,
+                    level: p.level,
+                    creation_timestamp: p.creation_timestamp,
+                    end_time: p.end_time,
+                    page_hash: p.page_hash,
+                });
+            }
+        }
+        pages.sort_by_key(|p| p.creation_timestamp);
+        let mut deltas = Vec::new();
+        for summary in pages {
+            if summary.end_time < from || summary.creation_timestamp > to { continue; }
+            if let Ok(Some(page)) = self.storage.load_page(summary.level, summary.page_id).await {
+                if let crate::core::page::PageContent::Leaves(leaves) = page.content {
+                    for leaf in leaves {
+                        if leaf.timestamp < from { continue; }
+                        if leaf.timestamp > to { break; }
+                        if leaf.container_id == container_id { deltas.push(leaf); }
+                    }
+                }
+            }
+        }
+        if deltas.is_empty() {
+            return Err(QueryError::ContainerNotFound(container_id.to_string()));
+        }
+        deltas.sort_by_key(|l| l.timestamp);
+        Ok(DeltaReport { container_id: container_id.to_string(), from_point: QueryPoint::Timestamp(from), to_point: QueryPoint::Timestamp(to), deltas })
+    }
+
+    pub async fn get_page_chain_integrity(
+        &self,
+        level: u8,
+        from: Option<u64>,
+        to: Option<u64>,
+    ) -> Result<Vec<PageIntegrityReport>, QueryError> {
+        if let (Some(f), Some(t)) = (from, to) { if f > t { return Err(QueryError::InvalidParameters("from > to".into())); } }
+        let mut pages = self.storage.list_finalized_pages_summary(level).await?;
+        if let Some(active) = self.time_manager.get_current_active_page_id(level).await {
+            if let Ok(Some(p)) = self.storage.load_page(level, active).await {
+                pages.push(crate::core::page::JournalPageSummary {
+                    page_id: p.page_id,
+                    level: p.level,
+                    creation_timestamp: p.creation_timestamp,
+                    end_time: p.end_time,
+                    page_hash: p.page_hash,
+                });
+            }
+        }
+        pages.sort_by_key(|p| p.page_id);
+        let mut reports = Vec::new();
+        let mut prev_hash: Option<[u8; 32]> = None;
+        for summary in pages {
+            if let Some(f) = from { if summary.page_id < f { continue; } }
+            if let Some(t) = to { if summary.page_id > t { continue; } }
+            match self.storage.load_page(level, summary.page_id).await {
+                Ok(Some(mut page)) => {
+                    let mut issues = Vec::new();
+                    let orig_hash = page.page_hash;
+                    let orig_root = page.merkle_root;
+                    page.recalculate_merkle_root_and_page_hash();
+                    if page.merkle_root != orig_root { issues.push("merkle_root mismatch".into()); }
+                    if page.page_hash != orig_hash { issues.push("page_hash mismatch".into()); }
+                    if let Some(prev) = prev_hash { if page.prev_page_hash != Some(prev) { issues.push("prev_page_hash mismatch".into()); } }
+                    prev_hash = Some(orig_hash);
+                    reports.push(PageIntegrityReport { page_id: summary.page_id, level, is_valid: issues.is_empty(), issues });
+                }
+                Ok(None) => {
+                    reports.push(PageIntegrityReport { page_id: summary.page_id, level, is_valid: false, issues: vec!["page missing".into()] });
+                    prev_hash = None;
+                }
+                Err(e) => return Err(QueryError::CoreError(e)),
+            }
+        }
+        Ok(reports)
     }
 
     // Helper async function (example, would need more thought)
