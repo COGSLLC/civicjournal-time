@@ -1,11 +1,11 @@
-⚠️ **BETA (v0.3.0)** — Core rollup, turnstile, and query features are stable.
+⚠️ **ALPHA (v0.3.0)** — Core rollup, turnstile, and query features are stable.
 # CivicJournal-Time
 
 **An append-only, verifiable ledger for robust audit trails and time-series data management.**
 
 CivicJournal-Time is a Rust-based system designed to create immutable, chronologically-ordered logs of events or data changes. It's particularly well-suited for tracking the history of external systems, providing a secure and verifiable audit trail that allows for state reconstruction, data integrity verification, and detailed auditing.
 
-
+⚠︎ ALPHA (v0.3.0) — Full hierarchical rollups and retention policies implemented, Query Engine operational.
 
 ## Core Concepts
 
@@ -17,6 +17,7 @@ At its heart, CivicJournal-Time organizes data into a hierarchical structure, en
 *   **Rollups**: The process of aggregating finalized child page data (either full leaves or their hashes/net-patches) into parent-level pages. Rollups are triggered based on configurable criteria:
     *   Maximum number of items per page (`max_items_per_page`).
     *   Maximum age of a page (`max_page_age_seconds`).
+    *   External events via the external API triggers.
     *   The type of content rolled up (e.g., `ChildHashes`, `NetPatches`) is also configurable per level.
     (See `src/core/time_manager.rs` and `src/types/time.rs`)
 *   **Merkle Trees**: Used within each `JournalPage` to calculate a single Merkle root hash. This root cryptographically represents all content within the page, allowing for efficient verification of data integrity and inclusion proofs. (See `src/core/merkle.rs`)
@@ -27,8 +28,13 @@ At its heart, CivicJournal-Time organizes data into a hierarchical structure, en
 *   **Verifiable Data Integrity**: Cryptographic hashing and Merkle trees at every level guarantee data authenticity and detect tampering.
 *   **Hierarchical Time-Based Organization**: Efficiently manages and queries large volumes of time-series data.
 *   **Configurable Rollup Strategies**: Flexible rules for how and when data is aggregated into higher-level summaries.
+*   **Configurable Retention Policies**: Support for different retention strategies at each hierarchy level:
+    *   `KeepIndefinitely`: Retain pages indefinitely
+    *   `DeleteAfterSecs`: Delete pages after a specified period
+    *   `KeepNPages`: Keep a fixed number of most recent pages
 *   **Pluggable Storage Backend**:
     *   Currently features `FileStorage` for disk-based persistence.
+    *   In-memory `MemoryStorage` for testing and development.
     *   Designed to support other backends in the future.
 *   **Configurable Page Compression**: Supports Zstd, Lz4, Snappy, or no compression for stored page files to save space.
 *   **Custom `.cjt` File Format**: Journal pages are stored in `.cjt` (CivicJournal Time Page) files, which include a 6-byte header specifying magic string, format version, and compression algorithm.
@@ -36,7 +42,13 @@ At its heart, CivicJournal-Time organizes data into a hierarchical structure, en
     *   Built-in functionality to backup the journal to a zip archive.
     *   Ability to restore the journal from a backup.
     *   Includes a `backup_manifest.json` for tracking backup details.
+    *   Supports both synchronous and asynchronous backup/restore operations.
 *   **Synchronous & Asynchronous APIs**: Provides both blocking and non-blocking APIs for integration flexibility. (See `src/api/`)
+*   **Query Engine**: Comprehensive query capabilities:
+    *   Leaf inclusion proofs with Merkle verification
+    *   Container state reconstruction at specific points in time
+    *   Delta reports showing changes over time ranges
+    *   Page chain integrity verification
 
 ### Query Engine and Turnstile Integration
 
@@ -58,9 +70,16 @@ A brief overview of the main directories:
     *   `page.rs`: `JournalPage` and `PageContent` definitions.
     *   `merkle.rs`: `MerkleTree` implementation.
     *   `time_manager.rs`: `TimeHierarchyManager` for managing pages and rollups.
+    *   `hash.rs`: Cryptographic hashing utilities.
+    *   `fixed_time_manager.rs`: Time manager with deterministic timestamps for testing.
 *   `src/error.rs`: Defines custom error types for the project.
-*   `src/storage/`: Contains storage backend implementations (e.g., `file.rs` for `FileStorage`).
+*   `src/storage/`: Contains storage backend implementations:
+    *   `file.rs`: `FileStorage` for disk-based persistence with compression support.
+    *   `memory.rs`: `MemoryStorage` for in-memory storage (useful for testing).
 *   `src/types/`: Common data types and enums used throughout the project (e.g., `TimeLevel`, `LevelRollupConfig`).
+*   `src/query/`: Query engine for advanced data retrieval and integrity verification.
+    *   `engine.rs`: Core query implementation.
+    *   `types.rs`: Data structures for query results.
 
 ## Getting Started
 
@@ -90,6 +109,12 @@ Ensure all components are functioning correctly:
 
 ```bash
 cargo test
+```
+
+For running tests that manipulate time for age-based rollup testing:
+
+```bash
+cargo test -- --include-ignored
 ```
 
 *(Note for Windows users: File locking issues with the test executable can sometimes occur. If `cargo clean` or `cargo test` fails unexpectedly, a system reboot or checking for locking processes might be necessary.)*

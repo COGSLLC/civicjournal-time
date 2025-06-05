@@ -1,6 +1,6 @@
 # CivicJournal Time - Development Plan
 
-## Status Update (2025-06-10)
+## Status Update (2025-06-05)
 
 ### Completed Tasks
 
@@ -24,8 +24,9 @@
 - [x] Add compression support (Zstd, Lz4, Snappy) for stored pages.
 - [x] Implement error handling for storage operations, including simulation of storage errors for testing.
 - [x] Update all documentation to reflect current implementation details.
-- [x] Finalize Query Engine with state reconstruction, delta reports, inclusion proofs, and chain integrity checks.
 - [x] Stabilize C and WASM FFI bindings for Turnstile and query features.
+- [x] Implement Query Engine with core query functionality including leaf inclusion proofs, state reconstruction, delta reports, and page chain integrity checks.
+
 
 ## Next Steps
 
@@ -38,8 +39,10 @@
      - [x] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32])`**
        - [x] Complete implementation in `FileStorage` and `MemoryStorage`
        - [x] Add comprehensive tests for proof generation and verification
+       - [ ] Optimize with more efficient page searching and indexing
      - [x] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>)`**
-       - [x] Implement state reconstruction logic
+       - [x] Basic implementation for state reconstruction
+       - [ ] Add performance optimizations for large datasets
        - [x] Add tests for various state reconstruction scenarios
      - [x] **`get_delta_report(container_id: String, from: DateTime<Utc>, to: DateTime<Utc>)`**
        - [x] Implement time-range based querying
