@@ -7,11 +7,13 @@ use crate::error::{CJError, Result as CJResult};
 use crate::storage::create_storage_backend;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use chrono::{DateTime, Utc};
 
 /// Provides a synchronous API for interacting with the CivicJournal.
 #[derive(Debug)]
 pub struct Journal {
-    manager: TimeHierarchyManager,
+    manager: Arc<TimeHierarchyManager>,
+    query: crate::query::QueryEngine,
     rt: Runtime, // Tokio runtime for executing async operations
 }
 
@@ -32,9 +34,11 @@ impl Journal {
         let storage_backend = rt.block_on(create_storage_backend(config))
             .map_err(|e| CJError::new(format!("Failed to create storage backend: {}", e)))?;
 
-        let manager = TimeHierarchyManager::new(Arc::new(config.clone()), Arc::from(storage_backend));
+        let storage_arc: Arc<dyn crate::storage::StorageBackend> = Arc::from(storage_backend);
+        let manager = Arc::new(TimeHierarchyManager::new(Arc::new(config.clone()), storage_arc.clone()));
+        let query = crate::query::QueryEngine::new(storage_arc.clone(), manager.clone(), Arc::new(config.clone()));
 
-        Ok(Self { manager, rt })
+        Ok(Self { manager, query, rt })
     }
 
     /// Retrieves a specific `JournalPage` by its level and ID.
@@ -61,6 +65,22 @@ impl Journal {
                 Err(e)
             }
         }
+    }
+
+    pub fn get_leaf_inclusion_proof(&self, leaf_hash: &[u8; 32]) -> CJResult<crate::query::types::LeafInclusionProof> {
+        self.rt.block_on(self.query.get_leaf_inclusion_proof(leaf_hash)).map_err(Into::into)
+    }
+
+    pub fn reconstruct_container_state(&self, container_id: &str, at: DateTime<Utc>) -> CJResult<crate::query::types::ReconstructedState> {
+        self.rt.block_on(self.query.reconstruct_container_state(container_id, at)).map_err(Into::into)
+    }
+
+    pub fn get_delta_report(&self, container_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> CJResult<crate::query::types::DeltaReport> {
+        self.rt.block_on(self.query.get_delta_report(container_id, from, to)).map_err(Into::into)
+    }
+
+    pub fn get_page_chain_integrity(&self, level: u8, from: Option<u64>, to: Option<u64>) -> CJResult<Vec<crate::query::types::PageIntegrityReport>> {
+        self.rt.block_on(self.query.get_page_chain_integrity(level, from, to)).map_err(Into::into)
     }
 }
 

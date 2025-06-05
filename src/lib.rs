@@ -16,6 +16,8 @@ pub mod core;
 pub mod error;
 /// Foreign Function Interface (FFI) for exposing CivicJournal functionality to other languages.
 pub mod ffi;
+/// Turnstile workflow implementation
+pub mod turnstile;
 /// Storage backends for persisting journal data.
 pub mod storage;
 /// Time-related utilities, including hierarchy levels and time units.

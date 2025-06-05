@@ -21,11 +21,10 @@ use serde_json::Value;
 /// storage backend that implements the `StorageBackend` trait.
 ///
 /// # Type Parameters
-/// * `S` - The storage backend implementation used to retrieve journal data
-#[derive(Clone)]
-pub struct QueryEngine<S: StorageBackend + Send + Sync + 'static> {
+#[derive(Clone, Debug)]
+pub struct QueryEngine {
     /// The storage backend used to retrieve journal pages
-    storage: Arc<S>,
+    storage: Arc<dyn StorageBackend>,
     
     /// The time hierarchy manager for locating pages in the time-based hierarchy
     time_manager: Arc<TimeHierarchyManager>,
@@ -34,7 +33,7 @@ pub struct QueryEngine<S: StorageBackend + Send + Sync + 'static> {
     _config: Arc<Config>,
 }
 
-impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
+impl QueryEngine {
     /// Creates a new `QueryEngine` with the specified storage, time manager, and configuration.
     ///
     /// # Arguments
@@ -42,7 +41,7 @@ impl<S: StorageBackend + Send + Sync + 'static> QueryEngine<S> {
     /// * `time_manager` - The time hierarchy manager for locating pages
     /// * `config` - Application configuration
     pub fn new(
-        storage: Arc<S>,
+        storage: Arc<dyn StorageBackend>,
         time_manager: Arc<TimeHierarchyManager>,
         config: Arc<Config>,
     ) -> Self {

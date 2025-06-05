@@ -153,6 +153,12 @@ impl From<String> for CJError {
     }
 }
 
+impl From<crate::query::types::QueryError> for CJError {
+    fn from(e: crate::query::types::QueryError) -> Self {
+        CJError::new(e.to_string())
+    }
+}
+
 // Implement From for other common error types
 impl From<Box<dyn std::error::Error + Send + Sync>> for CJError {
     fn from(err: Box<dyn std::error::Error + Send + Sync>) -> Self {

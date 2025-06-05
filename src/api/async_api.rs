@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 /// Provides an asynchronous API for interacting with the CivicJournal.
 pub struct Journal {
-    manager: TimeHierarchyManager,
+    manager: Arc<TimeHierarchyManager>,
+    query: crate::query::QueryEngine,
 }
 
 impl Journal {
@@ -28,9 +29,11 @@ impl Journal {
             .await
             .map_err(|e| CJError::new(format!("Failed to create storage backend: {}", e)))?;
 
-        let manager = TimeHierarchyManager::new(Arc::new(config.clone()), Arc::from(storage_backend));
+        let storage_arc: Arc<dyn crate::storage::StorageBackend> = Arc::from(storage_backend);
+        let manager = Arc::new(TimeHierarchyManager::new(Arc::new(config.clone()), storage_arc.clone()));
+        let query = crate::query::QueryEngine::new(storage_arc.clone(), manager.clone(), Arc::new(config.clone()));
 
-        Ok(Self { manager })
+        Ok(Self { manager, query })
     }
 
     /// Appends a new leaf (an individual record or event) to the journal.
@@ -99,6 +102,26 @@ impl Journal {
                 level, page_id, e
             ))),
         }
+    }
+
+    /// Retrieves a leaf inclusion proof for the given hash.
+    pub async fn get_leaf_inclusion_proof(&self, leaf_hash: &[u8; 32]) -> CJResult<crate::query::types::LeafInclusionProof> {
+        self.query.get_leaf_inclusion_proof(leaf_hash).await.map_err(Into::into)
+    }
+
+    /// Reconstructs the state of a container at a timestamp.
+    pub async fn reconstruct_container_state(&self, container_id: &str, at: DateTime<Utc>) -> CJResult<crate::query::types::ReconstructedState> {
+        self.query.reconstruct_container_state(container_id, at).await.map_err(Into::into)
+    }
+
+    /// Gets a delta report for a container between two timestamps.
+    pub async fn get_delta_report(&self, container_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> CJResult<crate::query::types::DeltaReport> {
+        self.query.get_delta_report(container_id, from, to).await.map_err(Into::into)
+    }
+
+    /// Checks integrity of a range of pages.
+    pub async fn get_page_chain_integrity(&self, level: u8, from: Option<u64>, to: Option<u64>) -> CJResult<Vec<crate::query::types::PageIntegrityReport>> {
+        self.query.get_page_chain_integrity(level, from, to).await.map_err(Into::into)
     }
 }
 
