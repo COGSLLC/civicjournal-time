@@ -416,4 +416,34 @@ Contributions are welcome! Please follow these general guidelines:
 
 ## License
 
-This project is licensed under the AGPL-3.0 for open-source use; contact about commercial licensing See the `LICENSE` file for details.
+### Open Source License
+
+CivicJournal-Time is available under the **GNU Affero General Public License v3.0 only** (AGPL-3.0-only) for open-source use.
+
+[![AGPL-3.0-only](https://img.shields.io/badge/License-AGPL_v3_only-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
+This is a strong copyleft license that requires any derivative works to be distributed under the same license.
+
+### Commercial Licensing
+
+For organizations that prefer not to be bound by the AGPL-3.0-only terms, commercial licenses are available. Commercial licenses provide:
+
+- **No AGPL Copyleft Requirements**: Use CivicJournal-Time in proprietary applications without the requirement to release your source code.
+
+Also available:
+- **Custom Development**: Tailored features and customizations to meet your specific needs.
+
+
+**Contact us** at `licensing@cogs.llc` to discuss commercial licensing options tailored to your organization's needs.
+
+### License Comparison
+
+| Feature | AGPL-3.0-only | Commercial License |
+|---------|---------------|-------------------|
+| Source Code Access Required | Yes | No |
+| Copyleft Requirements | Yes | No |
+| Priority Support | Community-based | Included |
+| Custom Development | Not included | Available |
+| Legal Indemnification | No | Included |
+
+See the [LICENSE](LICENSE) file for full AGPL-3.0-only license text and terms.

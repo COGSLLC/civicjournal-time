@@ -5,6 +5,9 @@ edition = "2021"
 description = "A hierarchical time-series journal system using merkle-chains and pages for efficient historical state management"
 license = "AGPL-3.0-only"
 
+# Commercial licensing available - contact licensing@cogs.llc
+# This software is dual-licensed under AGPL-3.0-only or a commercial license.
+
 # Documentation settings
 [package.metadata.docs.rs]
 # Enable all features for documentation

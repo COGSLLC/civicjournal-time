@@ -436,4 +436,4 @@ For support, please open an issue on the [GitHub repository](https://github.com/
 
 ## License
 
-CivicJournal-Time is licensed under the [MIT License](LICENSE).
+CivicJournal-Time is licensed under the [AGPL-3.0-only](LICENSE).
