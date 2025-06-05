@@ -1,11 +1,11 @@
-⚠️ ALPHA (v0.2.25) — Core functionality stable with Query Engine implementation and automated testing.
+⚠️ **ALPHA (v0.3.0)** — Core rollup, turnstile, and query features are stable.
 # CivicJournal-Time
 
 **An append-only, verifiable ledger for robust audit trails and time-series data management.**
 
 CivicJournal-Time is a Rust-based system designed to create immutable, chronologically-ordered logs of events or data changes. It's particularly well-suited for tracking the history of external systems, providing a secure and verifiable audit trail that allows for state reconstruction, data integrity verification, and detailed auditing.
 
-⚠︎ ALPHA (v0.2.25) — Full hierarchical rollups and retention policies implemented, Query Engine operational.
+⚠︎ ALPHA (v0.3.0) — Full hierarchical rollups and retention policies implemented, Query Engine operational.
 
 ## Core Concepts
 
@@ -49,6 +49,15 @@ At its heart, CivicJournal-Time organizes data into a hierarchical structure, en
     *   Container state reconstruction at specific points in time
     *   Delta reports showing changes over time ranges
     *   Page chain integrity verification
+
+### Query Engine and Turnstile Integration
+
+The project includes a full query subsystem (`src/query/`) capable of generating
+Merkle proofs, reconstructing container state, and reporting deltas over time.
+These capabilities are exposed through the public Rust APIs as well as C and
+WASM FFI bindings under `src/ffi/`. The optional Turnstile pattern uses these
+bindings to coordinate writes with external databases while ensuring
+append-only guarantees.
 
 ## Project Structure
 
