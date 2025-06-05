@@ -1,6 +1,6 @@
 # CivicJournal Time - Development Plan
 
-## Status Update (2025-06-04)
+## Status Update (2025-06-05)
 
 ### Completed Tasks
 
@@ -24,6 +24,7 @@
 - [x] Add compression support (Zstd, Lz4, Snappy) for stored pages.
 - [x] Implement error handling for storage operations, including simulation of storage errors for testing.
 - [x] Update all documentation to reflect current implementation details.
+- [x] Implement Query Engine with core query functionality including leaf inclusion proofs, state reconstruction, delta reports, and page chain integrity checks.
 
 ## Next Steps
 
@@ -32,19 +33,19 @@
 1. **API Development**
    - [x] Implement core async API for leaf appending and page retrieval
    - [x] Add sync API wrapper for blocking operations
-   - [ ] Implement Query Interface (`src/query/`):
-     - [ ] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32])`**
-       - [ ] Complete implementation in `FileStorage` and `MemoryStorage`
-       - [ ] Add comprehensive tests for proof generation and verification
-     - [ ] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>)`**
-       - [ ] Implement state reconstruction logic
-       - [ ] Add tests for various state reconstruction scenarios
-     - [ ] **`get_delta_report(container_id: String, from: DateTime<Utc>, to: DateTime<Utc>)`**
-       - [ ] Implement time-range based querying
+   - [x] Implement Query Interface (`src/query/`):
+     - [x] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32])`**
+       - [x] Core implementation in `QueryEngine`
+       - [ ] Optimize with more efficient page searching and indexing
+     - [x] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>)`**
+       - [x] Basic implementation for state reconstruction
+       - [ ] Add performance optimizations for large datasets
+     - [x] **`get_delta_report(container_id: String, from: DateTime<Utc>, to: DateTime<Utc>)`**
+       - [x] Implement time-range based querying
        - [ ] Add pagination support for large result sets
-     - [ ] **`get_page_chain_integrity(level: u8, from: Option<u64>, to: Option<u64>)`**
-       - [ ] Implement chain verification logic
-       - [ ] Add tests for chain verification
+     - [x] **`get_page_chain_integrity(level: u8, from: Option<u64>, to: Option<u64>)`**
+       - [x] Basic chain verification logic
+       - [ ] Add comprehensive tests for chain verification
    - [ ] Document API usage with examples
    - [ ] Add OpenAPI/Swagger documentation for HTTP endpoints
 
