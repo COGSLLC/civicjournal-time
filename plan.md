@@ -33,18 +33,18 @@
    - [x] Implement core async API for leaf appending and page retrieval
    - [x] Add sync API wrapper for blocking operations
    - [ ] Implement Query Interface (`src/query/`):
-     - [ ] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32])`**
-       - [ ] Complete implementation in `FileStorage` and `MemoryStorage`
-       - [ ] Add comprehensive tests for proof generation and verification
-     - [ ] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>)`**
-       - [ ] Implement state reconstruction logic
-       - [ ] Add tests for various state reconstruction scenarios
-     - [ ] **`get_delta_report(container_id: String, from: DateTime<Utc>, to: DateTime<Utc>)`**
-       - [ ] Implement time-range based querying
+     - [x] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32])`**
+       - [x] Complete implementation in `FileStorage` and `MemoryStorage`
+       - [x] Add comprehensive tests for proof generation and verification
+     - [x] **`reconstruct_container_state(container_id: String, at_timestamp: DateTime<Utc>)`**
+       - [x] Implement state reconstruction logic
+       - [x] Add tests for various state reconstruction scenarios
+     - [x] **`get_delta_report(container_id: String, from: DateTime<Utc>, to: DateTime<Utc>)`**
+       - [x] Implement time-range based querying
        - [ ] Add pagination support for large result sets
-     - [ ] **`get_page_chain_integrity(level: u8, from: Option<u64>, to: Option<u64>)`**
-       - [ ] Implement chain verification logic
-       - [ ] Add tests for chain verification
+     - [x] **`get_page_chain_integrity(level: u8, from: Option<u64>, to: Option<u64>)`**
+       - [x] Implement chain verification logic
+       - [x] Add tests for chain verification
    - [ ] Document API usage with examples
    - [ ] Add OpenAPI/Swagger documentation for HTTP endpoints
 
