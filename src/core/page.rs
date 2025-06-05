@@ -418,12 +418,16 @@ impl JournalPage {
         max_age: Option<chrono::Duration>,
     ) -> (bool, bool) {
         let is_over_max_leaves = self.content_len() >= max_leaves as usize;
+        // Age is measured from the timestamp of the first child (or the
+        // creation time if no child has been added yet). This prevents a page
+        // from immediately aging out when the first item arrives near the end
+        // of its time window.
         let oldest_ts = self.first_child_ts.unwrap_or(self.creation_timestamp);
         let calculated_age = operation_time - oldest_ts;
-        let is_over_age = max_age.map_or(false, |max_age| calculated_age > max_age);
+        let is_over_age = max_age.map_or(false, |max_age| calculated_age >= max_age);
         let is_outside_window = new_leaf_timestamp >= self.end_time;
 
-        println!("[JP_SHOULD_FINALIZE_AGE] Checking is_over_age: operation_time = {:?}, oldest_ts_in_page_for_age_check = {:?}, max_age = {:?}", operation_time, oldest_ts, max_age);
+        println!("[JP_SHOULD_FINALIZE_AGE] Checking is_over_age: operation_time = {:?}, oldest_ts = {:?}, max_age = {:?}", operation_time, oldest_ts, max_age);
 
         (is_over_max_leaves || is_over_age, is_outside_window)
     }
