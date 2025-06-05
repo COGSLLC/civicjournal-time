@@ -1,22 +1,295 @@
-**Rollup Mechanism Specification**
+# CivicJournal Time - Rollup Mechanism
+
+**Last Updated**: 2025-06-05  
+**Version**: 0.4.0
+
+## Overview
+
+The rollup mechanism in CivicJournal-Time is responsible for efficiently managing the hierarchical organization of journal data across multiple time-based levels. It transforms detailed data from lower levels into summarized forms at higher levels, enabling efficient long-term storage and querying while maintaining data integrity and verifiability.
+
+### Key Features
+
+- **Hierarchical Time-Based Organization**: Data is organized in a multi-level structure (minutes → hours → days → months → years → decades → centuries)
+- **Configurable Rollup Triggers**: Automatic rollups based on size and time thresholds
+- **Multiple Content Types**: Support for both child hashes and net patches in parent pages
+- **Immutable and Verifiable**: Cryptographic hashing ensures data integrity
+- **Efficient Storage**: Configurable compression and retention policies
+- **Asynchronous Processing**: Non-blocking operations for high throughput
+
+## Core Concepts
+
+### Rollup Hierarchy
+
+CivicJournal-Time organizes data in a hierarchical structure with the following levels by default:
+
+| Level | Name    | Duration  | Description                           |
+|-------|---------|-----------|---------------------------------------|
+| 0     | Minute  | 60s       | Most granular level, stores raw leaves |
+| 1     | Hour    | 3600s     | Aggregates minute-level data          |
+| 2     | Day     | 86400s    | Aggregates hour-level data            |
+| 3     | Month   | 2,592,000s| Aggregates day-level data             |
+| 4     | Year    | 31,536,000s| Aggregates month-level data           |
+| 5     | Decade  | 315,360,000s| Aggregates year-level data           |
+| 6     | Century | 3,153,600,000s| Aggregates decade-level data       |
+
+Each level can be configured with custom durations to match specific use cases.
+
+### Rollup Content Types
+
+When rolling up data from one level to the next, the system can use different strategies for representing the relationship between parent and child pages:
+
+1. **Child Hashes (Default)**:
+   - Stores the Merkle root hashes of child pages
+   - Provides cryptographic proof of child page contents
+   - More storage efficient for large numbers of children
+   - Requires loading child pages to access their contents
+
+2. **Net Patches**:
+   - Stores the net effect of all changes in child pages
+   - Enables efficient state reconstruction without loading all children
+   - More complex to compute and verify
+   - Better for read-heavy workloads with large hierarchies
+
+## Configuration
+
+### Time Hierarchy
+
+The time hierarchy is defined in the configuration file:
+
+```toml
+[time_hierarchy]
+levels = [
+    { name = "minute", duration_seconds = 60 },
+    { name = "hour", duration_seconds = 3600 },
+    { name = "day", duration_seconds = 86400 },
+    # ... additional levels ...
+]
+```
+
+### Rollup Settings
+
+Each level (except the highest) can have its own rollup configuration:
+
+```toml
+[[rollup.levels]]
+max_items_per_page = 1000      # Maximum leaves before rollup
+max_page_age_seconds = 3600    # Maximum age before rollup (1 hour)
+content_type = "ChildHashes"   # or "NetPatches"
+```
+
+### Retention Policies
+
+Retention policies control how long data is kept at each level:
+
+```toml
+[retention]
+enabled = true
+period_seconds = 2592000  # 30 days
+cleanup_interval_seconds = 86400  # 1 day
+```
+
+## Rollup Process
+
+### Trigger Conditions
+
+Rollups are triggered by:
+
+1. **Size-based**: When a page reaches `max_items_per_page`
+2. **Time-based**: When a page is older than `max_page_age_seconds`
+3. **Event-based**: When explicitly triggered via API
+4. **Cascading**: When a rollup at a lower level causes parent pages to exceed their limits
+
+### Rollup Steps
+
+1. **Page Finalization**:
+   - Mark the page as read-only
+   - Calculate and store the Merkle root
+   - Write the page to persistent storage
+
+2. **Parent Page Selection**:
+   - Determine the appropriate parent page based on the timestamp
+   - Create a new parent page if none exists
+
+3. **Content Generation**:
+   - For ChildHashes: Add the child page's Merkle root to the parent
+   - For NetPatches: Compute the net effect of all leaves in the child page
+
+4. **Parent Update**:
+   - Update the parent page's Merkle tree
+   - Check if the parent now needs to be rolled up
+
+5. **Cleanup**:
+   - Remove the original page if retention policies allow
+   - Update any relevant metadata
 
 ---
 
-### 1. Overview & Purpose
+## Implementation Details
 
-The rollup mechanism is responsible for grouping, aggregating, and hierarchically folding raw “leaf” events (deltas) into progressively coarser epochs (e.g., minutes → hours → days → …). Its primary goals are:
+### Data Structures
 
-1. **Immutable Storage**: Ensure every raw change (leaf) is committed into a Merkle-rooted “page” at Level 0.
-2. **Automatic Aggregation**: Aggregate Level N pages into Level N+1 when either:
-   - The number of items in a page reaches `max_items_per_page` threshold, or
-   - The page's age exceeds `max_page_age_seconds`
-3. **Efficient Storage**: Discard empty pages (pages with no content) to save storage.
-4. **Hierarchical Propagation**: Propagate page hashes or net patches upward into parent pages, maintaining cryptographic links.
-5. **Verifiable History**: Record time windows, Merkle roots, and references to enable forward/backward reconstruction and verification.
+```rust
+// From src/core/page.rs
+pub enum PageContent {
+    /// Level 0: Contains actual journal leaves
+    Leaves(Vec<JournalLeaf>),
+    /// Level 1+: Contains hashes of child pages
+    ChildHashes(Vec<[u8; 32]>),
+    /// Level 1+: Contains net patches
+    NetPatches(Vec<[u8; 32]>),
+}
 
----
+// From src/core/time_manager.rs
+pub struct RollupTask {
+    pub level: u8,
+    pub page_id: u64,
+    pub timestamp: DateTime<Utc>,
+    pub reason: RollupReason,
+}
 
-### 2. Terminology & Definitions
+pub enum RollupReason {
+    SizeLimit,
+    AgeLimit,
+    Manual,
+    Cascade,
+}
+```
+
+### Concurrency Model
+
+- Rollups are processed asynchronously in the background
+- Each page is locked during rollup to prevent concurrent modifications
+- Multiple rollups can proceed in parallel for different pages/levels
+- Failed rollups are automatically retried with exponential backoff
+
+### Error Handling
+
+- Failed rollups are logged and retried
+- Corrupted pages are quarantined and reported
+- Rollup progress is checkpointed to ensure consistency
+
+## Performance Considerations
+
+### Write Amplification
+
+Rollups can cause write amplification as data is rewritten to higher levels. This is mitigated by:
+
+- Configurable rollup thresholds
+- Efficient serialization formats
+- Background processing
+
+### Memory Usage
+
+- Active pages are kept in memory for fast access
+- Memory usage scales with the number of active pages and rollup queue size
+- Configurable limits prevent excessive memory consumption
+
+### I/O Patterns
+
+- Sequential writes for better disk throughput
+- Read-ahead for sequential scans
+- Configurable I/O concurrency
+
+## Monitoring and Metrics
+
+### Key Metrics
+
+- Rollup queue length
+- Rollup duration by level
+- Page sizes by level
+- Rollup success/failure rates
+- Storage usage by level
+
+### Logging
+
+- Detailed rollup events
+- Performance statistics
+- Error conditions
+
+## Best Practices
+
+### Configuration Guidelines
+
+1. **Time Windows**:
+   - Choose level durations based on query patterns
+   - Balance between granularity and rollup frequency
+
+2. **Rollup Triggers**:
+   - Set `max_items_per_page` based on expected write volume
+   - Use `max_page_age_seconds` to ensure timely rollups
+
+3. **Retention Policies**:
+   - Keep more detailed data for recent time periods
+   - Aggregate older data to save space
+
+### Performance Tuning
+
+1. **Memory Configuration**:
+   - Allocate sufficient memory for page cache
+   - Monitor memory pressure
+
+2. **I/O Optimization**:
+   - Use SSDs for better random I/O performance
+   - Consider filesystem tuning parameters
+
+3. **Concurrency**:
+   - Adjust the number of rollup workers
+   - Balance between CPU and I/O utilization
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Rollup Lagging**
+   - **Symptoms**: Queue keeps growing, high latency
+   - **Possible Causes**:
+     - Insufficient I/O bandwidth
+     - CPU saturation
+     - Storage performance issues
+   - **Solutions**:
+     - Increase rollup worker count
+     - Tune storage subsystem
+     - Adjust rollup thresholds
+
+2. **High Memory Usage**
+   - **Symptoms**: OOM errors, excessive swapping
+   - **Possible Causes**:
+     - Too many active pages
+     - Large pages
+   - **Solutions**:
+     - Reduce page size
+     - Limit concurrent rollups
+     - Increase system memory
+
+3. **Rollup Failures**
+   - **Symptoms**: Failed rollups in logs
+   - **Possible Causes**:
+     - Corrupt pages
+     - Permission issues
+     - Storage full
+   - **Solutions**:
+     - Check system logs
+     - Verify storage permissions
+     - Free up disk space
+
+## Future Enhancements
+
+### Planned Features
+
+1. **Incremental Rollups**: Only process changed data
+2. **Compression**: More efficient storage of rollup data
+3. **Tiered Storage**: Move cold data to cheaper storage
+4. **Predictive Rollups**: Schedule based on usage patterns
+
+### Performance Optimizations
+
+1. **Parallel Processing**: Distribute rollups across cores
+2. **Vectorized Operations**: Use SIMD for hash calculations
+3. **Zero-Copy Deserialization**: Reduce memory copies
+
+## Conclusion
+
+The rollup mechanism is a critical component of CivicJournal-Time, enabling efficient management of time-series data across multiple granularities. By understanding and properly configuring the rollup process, users can achieve optimal performance and storage efficiency for their specific use case.
 
 * **Leaf (JournalLeaf):** A single raw event or delta. Its structure is defined as (see `src/core/leaf.rs` for the canonical definition):
   ```rust
