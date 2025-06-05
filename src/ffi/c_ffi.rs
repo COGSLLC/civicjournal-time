@@ -1,61 +1,209 @@
 // src/ffi/c_ffi.rs
 
-//! Minimal C-compatible FFI exposing query functionality for Turnstile.
-
-use libc;
+use crate::turnstile::Turnstile;
+use serde::Deserialize;
+use std::path::PathBuf;
+use libc::{c_char, c_int};
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
-use std::sync::OnceLock;
 
-use crate::api::sync_api::Journal;
-use crate::config::Config;
-
-static GLOBAL_JOURNAL: OnceLock<Journal> = OnceLock::new();
-
-/// Initialize a default in-memory journal for FFI calls.
-#[no_mangle]
-pub extern "C" fn civicjournal_init_default() -> libc::c_int {
-    let cfg = Box::leak(Box::new(Config::default()));
-    match Journal::new(cfg) {
-        Ok(j) => {
-            let _ = GLOBAL_JOURNAL.set(j);
-            0
-        }
-        Err(_) => 1,
-    }
+/// Opaque CJT client handle used across FFI calls.
+#[repr(C)]
+pub struct CJTClient {
+    ts: Turnstile,
 }
 
-fn get_journal() -> Result<&'static Journal, CString> {
-    GLOBAL_JOURNAL
-        .get()
-        .ok_or_else(|| CString::new("not_initialized").unwrap())
+#[derive(Deserialize)]
+struct InitConfig {
+    storage_path: Option<String>,
+    max_retries: Option<u32>,
+    orphan_event_logging: Option<bool>,
 }
 
-/// Retrieve container state as JSON at the given timestamp (seconds since epoch).
+/// Initialize a CJT client from JSON config.
 #[no_mangle]
-pub extern "C" fn civicjournal_get_container_state(container_id: *const c_char, ts_secs: i64) -> *mut c_char {
-    if container_id.is_null() {
-        return CString::new("null_ptr").unwrap().into_raw();
+pub extern "C" fn cjt_init(config_json: *const c_char) -> *mut CJTClient {
+    if config_json.is_null() {
+        return std::ptr::null_mut();
     }
-    let cid = unsafe { CStr::from_ptr(container_id) }.to_string_lossy();
-    let ts = chrono::NaiveDateTime::from_timestamp_opt(ts_secs, 0)
-        .unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0, 0))
-        .and_utc();
-    match get_journal() {
-        Ok(j) => match j.reconstruct_container_state(&cid, ts) {
-            Ok(state) => CString::new(state.state_data.to_string()).unwrap().into_raw(),
-            Err(e) => CString::new(e.to_string()).unwrap().into_raw(),
-        },
-        Err(e) => e.into_raw(),
-    }
+    let c_str = unsafe { CStr::from_ptr(config_json) };
+    let config_str = match c_str.to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let cfg: InitConfig = serde_json::from_str(config_str).unwrap_or(InitConfig {
+        storage_path: None,
+        max_retries: None,
+        orphan_event_logging: None,
+    });
+    let ts = Turnstile::new_with_storage(
+        "00".repeat(32),
+        cfg.max_retries.unwrap_or(5),
+        cfg.storage_path.map(PathBuf::from),
+        cfg.orphan_event_logging.unwrap_or(true),
+    );
+    Box::into_raw(Box::new(CJTClient { ts }))
 }
 
-/// Free a string returned by the FFI.
+/// Destroy a CJT client.
 #[no_mangle]
-pub extern "C" fn civicjournal_free_string(s: *mut c_char) {
-    if s.is_null() {
+pub extern "C" fn cjt_destroy(ptr: *mut CJTClient) {
+    if ptr.is_null() {
         return;
     }
-    unsafe { drop(CString::from_raw(s)); }
+    unsafe { drop(Box::from_raw(ptr)); }
+}
+
+/// Append a payload and get back the ticket hash.
+#[no_mangle]
+pub extern "C" fn cjt_turnstile_append(
+    ptr: *mut CJTClient,
+    payload_json: *const c_char,
+    timestamp: u64,
+    out_ticket: *mut c_char,
+) -> c_int {
+    if ptr.is_null() || payload_json.is_null() || out_ticket.is_null() {
+        return -1;
+    }
+    let ts = unsafe { &mut (*ptr).ts };
+    let c_str = unsafe { CStr::from_ptr(payload_json) };
+    match c_str.to_str() {
+        Ok(payload) => match ts.append(payload, timestamp) {
+            Ok(ticket) => {
+                let bytes = ticket.as_bytes();
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ticket as *mut u8, bytes.len());
+                    *out_ticket.add(64) = 0;
+                }
+                0
+            }
+            Err(_) => -2,
+        },
+        Err(_) => -3,
+    }
+}
+
+/// Confirm or reject a pending ticket.
+#[no_mangle]
+pub extern "C" fn cjt_confirm_ticket(
+    ptr: *mut CJTClient,
+    leaf_hash: *const c_char,
+    status: c_int,
+    err_msg: *const c_char,
+) -> c_int {
+    if ptr.is_null() || leaf_hash.is_null() {
+        return -1;
+    }
+    let ts = unsafe { &mut (*ptr).ts };
+    let hash = unsafe { CStr::from_ptr(leaf_hash) }.to_string_lossy();
+    let err = if !err_msg.is_null() {
+        Some(unsafe { CStr::from_ptr(err_msg) }.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    match ts.confirm_ticket(&hash, status != 0, err.as_deref()) {
+        Ok(_) => 0,
+        Err(_) => -2,
+    }
+}
+
+/// Retry the next pending ticket using the provided callback.
+#[no_mangle]
+pub extern "C" fn cjt_retry_next_pending(
+    ptr: *mut CJTClient,
+    callback: Option<extern "C" fn(*const c_char, *const c_char, *const c_char) -> c_int>,
+) -> c_int {
+    if ptr.is_null() {
+        return -1;
+    }
+    let ts = unsafe { &mut (*ptr).ts };
+    let cb = match callback {
+        Some(func) => func,
+        None => return -1,
+    };
+    let rc = ts
+        .retry_next_pending(|prev, payload, leaf| {
+            let prev_c = CString::new(prev).unwrap();
+            let payload_c = CString::new(payload).unwrap();
+            let leaf_c = CString::new(leaf).unwrap();
+            cb(prev_c.as_ptr(), payload_c.as_ptr(), leaf_c.as_ptr()) as i32
+        })
+        .unwrap_or(-3);
+    rc
+}
+
+/// Check if a leaf exists.
+#[no_mangle]
+pub extern "C" fn cjt_leaf_exists(ptr: *mut CJTClient, leaf_hash: *const c_char) -> c_int {
+    if ptr.is_null() || leaf_hash.is_null() {
+        return -1;
+    }
+    let ts = unsafe { &mut (*ptr).ts };
+    let hash = unsafe { CStr::from_ptr(leaf_hash) }.to_string_lossy();
+    match ts.leaf_exists(&hash) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => -2,
+    }
+}
+
+/// Get latest committed leaf hash.
+#[no_mangle]
+pub extern "C" fn cjt_get_latest_leaf_hash(ptr: *mut CJTClient, out_hash: *mut c_char) -> c_int {
+    if ptr.is_null() || out_hash.is_null() {
+        return -1;
+    }
+    let ts = unsafe { &mut (*ptr).ts };
+    let hash = ts.latest_leaf_hash();
+    let bytes = hash.as_bytes();
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_hash as *mut u8, bytes.len());
+        *out_hash.add(64) = 0;
+    }
+    0
+}
+
+/// Get pending count.
+#[no_mangle]
+pub extern "C" fn cjt_pending_count(ptr: *mut CJTClient) -> c_int {
+    if ptr.is_null() {
+        return -1;
+    }
+    let ts = unsafe { &mut (*ptr).ts };
+    ts.pending_count() as c_int
+}
+
+/// List pending hashes.
+#[no_mangle]
+pub extern "C" fn cjt_list_pending(
+    ptr: *mut CJTClient,
+    out_hashes: *mut [c_char; 65],
+    max_entries: c_int,
+) -> c_int {
+    if ptr.is_null() || out_hashes.is_null() {
+        return -1;
+    }
+    let ts = unsafe { &mut (*ptr).ts };
+    let max = max_entries as usize;
+    let hashes = ts.list_pending(max);
+    let slice = unsafe { std::slice::from_raw_parts_mut(out_hashes, max) };
+    for (i, h) in hashes.iter().enumerate() {
+        let bytes = h.as_bytes();
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), slice[i].as_mut_ptr() as *mut u8, bytes.len());
+            slice[i][64] = 0;
+        }
+    }
+    hashes.len() as c_int
+}
+
+#[cfg(test)]
+mod tests {
+    
+
+    #[test]
+    fn it_works_c_ffi() {
+        // FFI tests are more complex and often involve writing C code to call the Rust library.
+        // For now, this is a placeholder.
+    }
 }
 
