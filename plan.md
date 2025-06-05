@@ -1,6 +1,6 @@
 # CivicJournal Time - Development Plan
 
-## Status Update (2025-06-04)
+## Status Update (2025-06-10)
 
 ### Completed Tasks
 
@@ -24,6 +24,8 @@
 - [x] Add compression support (Zstd, Lz4, Snappy) for stored pages.
 - [x] Implement error handling for storage operations, including simulation of storage errors for testing.
 - [x] Update all documentation to reflect current implementation details.
+- [x] Finalize Query Engine with state reconstruction, delta reports, inclusion proofs, and chain integrity checks.
+- [x] Stabilize C and WASM FFI bindings for Turnstile and query features.
 
 ## Next Steps
 
@@ -32,7 +34,7 @@
 1. **API Development**
    - [x] Implement core async API for leaf appending and page retrieval
    - [x] Add sync API wrapper for blocking operations
-   - [ ] Implement Query Interface (`src/query/`):
+   - [x] Implement Query Interface (`src/query/`):
      - [x] **`get_leaf_inclusion_proof(leaf_hash: [u8; 32])`**
        - [x] Complete implementation in `FileStorage` and `MemoryStorage`
        - [x] Add comprehensive tests for proof generation and verification
@@ -577,9 +579,9 @@ This phase exposes core functionality.
 
 These are crucial but can be built upon the core established in Phases 1-4.
 
-*   **Task 5.1: Query Engine**: Implement advanced queries (leaf inclusion proofs, page-chain integrity, state replay, time-range, container-centric).
+*   **Task 5.1: Query Engine**: Implement advanced queries (leaf inclusion proofs, page-chain integrity, state replay, time-range, container-centric). **(Completed)**
 *   **Task 5.2: External Anchoring (`TSProof`)**: Integrate with a Time Stamping Authority (TSA) or OpenTimestamps to get `TSProof` for `MerkleRoot`s. Store and retrieve these proofs.
-*   **Task 5.3: FFI (C and WASM bindings)**: Expose the public API.
+*   **Task 5.3: FFI (C and WASM bindings)**: Expose the public API. **(Completed)**
 *   **Task 5.4: Metrics and Retention Policies**: Implement functionality based on `[metrics]` and `[retention]` config sections.
 *   **Task 5.5: Comprehensive Testing**: Unit, integration, and end-to-end tests for all features.
 
