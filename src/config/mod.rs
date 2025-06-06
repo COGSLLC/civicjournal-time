@@ -14,6 +14,10 @@ pub mod validation;
 #[path = "tests/validation_tests.rs"]
 mod validation_tests;
 
+#[cfg(test)]
+#[path = "tests/config_mod_tests.rs"]
+mod config_mod_tests;
+
 // Publicly re-export key configuration types from the types module
 pub use crate::types::time::{LevelRollupConfig, TimeHierarchyConfig, TimeLevel};
 
