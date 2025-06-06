@@ -532,6 +532,7 @@ components:
  - `src/core/page.rs` – unit tests validating page hashing logic and
    serialization round trips. A boundary test confirms `is_content_empty`
    transitions correctly when leaves are added.
+
 - `src/core/merkle.rs` – exhaustive tests of `MerkleTree` construction and
   proof generation.
 - `src/config/tests/config_mod_tests.rs` – configuration loading,
@@ -550,6 +551,7 @@ components:
   directory returns an empty list.
   A new check verifies that `page_exists` returns false before storing a page
   and true afterward.
+
 - `tests/time_manager_*` – tests for the time hierarchy manager including
   rollup and retention behaviour.
   A new boundary test verifies that leaves exactly on page window

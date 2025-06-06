@@ -225,6 +225,7 @@ async fn test_load_leaf_by_hash_ignores_l1_pages() {
 }
 
 #[tokio::test]
+
 async fn test_backup_empty_and_restore() {
     reset_global_ids();
     let dir = tempdir().unwrap();

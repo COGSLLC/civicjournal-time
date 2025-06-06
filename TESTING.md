@@ -106,7 +106,7 @@ storage::memory.rs (MemoryStorage)
 ✅ page_exists: verify page_exists is false before storing and true after storing a page
 
 ✅ clear: store pages, call clear(), and ensure storage is empty and page_exists is false for all pages
- 
+
 .
 <!-- Fail-on-store: use set_fail_on_store(level, page_id) to simulate errors (the tests show this)
 
@@ -120,6 +120,7 @@ Test that calling it returns Ok(()) and does not alter storage. restore_journal 
 
 ; test that it returns Err(CJError::NotImplemented) or similar. -->
 ✅ load_page_by_hash: test retrieving by page hash: after storing pages, take one page’s page_hash and call load_page_by_hash; it should return the full page
+
  
 .
 ✅ load_leaf_by_hash: covered by tests. In an L0 page with multiple leaves, each leaf’s hash should be found. Also verify that leaves in L1 pages are not found (only L0 is searched) and that non-existent hashes return Ok(None)
@@ -134,6 +135,7 @@ storage::file.rs (FileStorage)
 ✅ Corrupt header tests: manually create a file with wrong magic or version (or write junk to the first bytes of a valid .cjt file) and verify load_page returns Err(CJError::InvalidFileFormat)
 
 
+
 <!--
 page_exists and delete_page: verify page_exists(level,page_id) matches filesystem state. Test deleting a page file removes it (and page_exists returns false afterward)
 
@@ -143,6 +145,7 @@ Deleting a non-existent page should still return Ok(()).
 ✅ load_page_by_hash: store several pages at various levels; take one page_hash and call load_page_by_hash. Verify it finds and returns the correct page
 
 ✅ Test that it skips files with wrong magic or extension (code uses MAGIC_STRING and known extensions) and returns Ok(None) if not found
+
 
 load_leaf_by_hash: similar to MemoryStorage: for L0 pages with leaves, verify each leaf’s hash is found
 -->
@@ -190,6 +193,7 @@ list_pending(max): test it returns up to max hashes of status Pending.-->
 ✅ TimeHierarchy + Storage Integration: use a shared test config with MemoryStorage or a temp FileStorage to simulate actual journal usage:
 ✅ Append a series of leaves (via async API or directly via TimeHierarchyManager) and then use the query engine (Journal::get_delta_report, etc.) to fetch reports. Verify consistency of data across components.
 ✅ Test roll-up across levels: e.g. append enough leaves to fill and finalize L0 pages, then check that L1 pages are created with correct thrall hashes (using get_page_chain_integrity).
+
 <!-- Configuration + Init Integration: call civicjournal_time::init(config_path) with a path to a custom TOML file (or none) and verify the global config is initialized and accessible via config(). Test that environment overrides are applied at init (e.g. set CJ_LOGGING_LEVEL before init). -->
 <!-- End-to-End Workflow (API): simulate an application scenario:
 Initialize the system with a test config (e.g. in-memory storage).
@@ -208,6 +212,7 @@ Passing a non-JSON or malformed JSON string to Turnstile::append or compute_hash
 . Test these by writing custom invalid files. -->
 Boundary Conditions:
 <!-- Test pages with zero leaves (empty pages) and maximum allowed leaves (if any). -->
+
 <!-- Time edges: leaves with timestamps exactly on roll-up boundaries. -->
 4. API (Endpoint) Tests
 (No HTTP endpoints are defined in this library.) The “API” here refers to the Rust synchronous/asynchronous interfaces described above. Their key behaviors are covered in unit/integration tests. If a future version exposes REST or CLI commands, those would require corresponding tests.
