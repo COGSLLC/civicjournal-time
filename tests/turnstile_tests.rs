@@ -50,6 +50,22 @@ fn test_turnstile_retry_logic() {
 }
 
 #[test]
+fn test_retry_succeeds_after_temporary_failure() {
+    let mut ts = Turnstile::new("00".repeat(32), 2);
+    ts.append("{\"x\":1}", 1).unwrap();
+
+    // first retry fails, leaving the entry pending
+    let rc = ts.retry_next_pending(|_, _, _| 0).expect("retry");
+    assert_eq!(rc, 1);
+    assert_eq!(ts.pending_count(), 1);
+
+    // second retry succeeds and commits the entry
+    let rc = ts.retry_next_pending(|_, _, _| 1).expect("retry");
+    assert_eq!(rc, 0);
+    assert_eq!(ts.pending_count(), 0);
+}
+
+#[test]
 fn test_orphan_event_logged() {
     let mut ts = Turnstile::new("00".repeat(32), 3);
     let t = ts.append("{\"z\":1}", 10).unwrap();
