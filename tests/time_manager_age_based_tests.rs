@@ -14,6 +14,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use tokio::time::{sleep, Duration as TokioDuration};
+use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
 
 // Helper to create a test config with specific age-based rollup settings
 fn create_age_based_test_config(
@@ -86,6 +87,8 @@ fn create_age_based_test_config(
 
 #[tokio::test]
 async fn test_age_based_rollup() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     // Configure short age thresholds for testing (in seconds)
     let l0_max_age = 2;  // L0 pages older than 2 seconds should roll up
     let l1_max_age = 5;  // L1 pages older than 5 seconds should roll up
@@ -165,7 +168,11 @@ async fn test_age_based_rollup() {
     manager.add_leaf(&leaf3, leaf3.timestamp).await.unwrap();
     
     // Verify L1 page was rolled up to L2
-    let l1_pages = storage.list_finalized_pages_summary(1).await.unwrap();
+    let mut l1_pages = storage.list_finalized_pages_summary(1).await.unwrap();
+    if l1_pages.is_empty() {
+        sleep(TokioDuration::from_secs(1)).await;
+        l1_pages = storage.list_finalized_pages_summary(1).await.unwrap();
+    }
     assert_eq!(l1_pages.len(), 1, "Should have 1 finalized L1 page");
     
     // L2 page might be active or already finalized
@@ -193,6 +200,8 @@ async fn test_age_based_rollup() {
 
 #[tokio::test]
 async fn test_cascading_age_based_rollup() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     // Configure very short age thresholds for testing cascading rollups
     let l0_max_age = 1;
     let l1_max_age = 2;

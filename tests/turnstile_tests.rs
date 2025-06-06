@@ -113,6 +113,33 @@ fn test_retry_next_pending_no_entries() {
 }
 
 #[test]
+fn test_retry_next_pending_hash_mismatch() {
+    use serde_json::Value;
+    use std::fs;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ts");
+    let mut ts = Turnstile::new_with_storage("00".repeat(32), 1, Some(path.clone()), true);
+    let ticket = ts.append("{\"a\":1}", 0).unwrap();
+
+    // tamper with persisted payload
+    let state_file = path.join("turnstile_state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&state_file).unwrap()).unwrap();
+    state["pending"][&ticket]["payload_json"] = Value::String("{\"a\":2}".into());
+    fs::write(&state_file, serde_json::to_vec(&state).unwrap()).unwrap();
+
+    // reload from disk so the modified payload is used
+    let mut ts = Turnstile::new_with_storage("irrelevant".into(), 1, Some(path), true);
+
+    let rc = ts.retry_next_pending(|_, _, _| 1).unwrap();
+    assert_eq!(rc, -2);
+    assert_eq!(ts.pending_count(), 0);
+    assert!(ts.leaf_exists(&ticket).unwrap());
+    assert!(ts.orphan_events().is_empty());
+}
+
+
+#[test]
 fn test_list_pending_respects_max() {
     let mut ts = Turnstile::new("00".repeat(32), 3);
     let t1 = ts.append("{\"a\":1}", 0).unwrap();
@@ -121,6 +148,37 @@ fn test_list_pending_respects_max() {
     let list = ts.list_pending(2);
     assert_eq!(list.len(), 2);
     assert!(list.contains(&t1) || list.contains(&t2) || list.contains(&t3));
+}
+
+#[test]
+fn test_retry_next_pending_failure_logs_orphan() {
+    let mut ts = Turnstile::new("00".repeat(32), 2);
+    let ticket = ts.append("{\"a\":1}", 42).unwrap();
+    let prev = ts.latest_leaf_hash();
+    let rc = ts.retry_next_pending(|_, _, _| 0).unwrap();
+    assert_eq!(rc, 1);
+    assert_eq!(ts.pending_count(), 1);
+    assert_ne!(ts.latest_leaf_hash(), prev);
+    assert_eq!(ts.orphan_events().len(), 1);
+    let orphan = &ts.orphan_events()[0];
+    assert_eq!(orphan.orig_hash, ticket);
+    assert_eq!(orphan.error_msg, "retry failed");
+    assert_eq!(orphan.timestamp, 42);
+}
+
+#[test]
+fn test_retry_next_pending_exceeds_max_retries() {
+    let mut ts = Turnstile::new("00".repeat(32), 1);
+    let ticket = ts.append("{\"a\":1}", 5).unwrap();
+    let rc = ts.retry_next_pending(|_, _, _| 0).unwrap();
+    assert_eq!(rc, 2);
+    assert_eq!(ts.pending_count(), 0);
+    assert!(ts.leaf_exists(&ticket).unwrap());
+    assert_eq!(ts.orphan_events().len(), 1);
+    let orphan = &ts.orphan_events()[0];
+    assert_eq!(orphan.orig_hash, ticket);
+    assert_eq!(orphan.error_msg, "retry failed");
+    assert_eq!(orphan.timestamp, 5);
 }
 
 #[test]
@@ -142,4 +200,43 @@ fn test_append_invalid_json_and_prev_hash() {
     // invalid previous hash also results in error
     let mut ts = Turnstile::new("zz".into(), 3);
     assert!(ts.append("{\"a\":1}", 0).is_err());
+}
+
+#[test]
+fn test_confirm_ticket_failure_marks_permanent_after_retries() {
+    use civicjournal_time::turnstile::PendingStatus;
+    use serde_json::Value;
+    use std::fs;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ts");
+    let mut ts = Turnstile::new_with_storage("00".repeat(32), 1, Some(path.clone()), true);
+    let ticket = ts.append("{\"a\":1}", 99).unwrap();
+
+    // first failure - still pending
+    ts.confirm_ticket(&ticket, false, Some("e1")).unwrap();
+    let state_file = path.join("turnstile_state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&state_file).unwrap()).unwrap();
+    let entry = &state["pending"][&ticket];
+    assert_eq!(entry["retry_count"], 1);
+    assert_eq!(entry["status"], "Pending");
+    assert_eq!(entry["last_error"], "e1");
+    assert_eq!(ts.orphan_events().len(), 1);
+    let orphan1 = &ts.orphan_events()[0];
+    assert_eq!(orphan1.orig_hash, ticket);
+    assert_eq!(orphan1.error_msg, "e1");
+    assert_eq!(orphan1.timestamp, 99);
+
+    // second failure exceeds max_retries
+    ts.confirm_ticket(&ticket, false, Some("e2")).unwrap();
+    state = serde_json::from_slice(&fs::read(&state_file).unwrap()).unwrap();
+    let entry = &state["pending"][&ticket];
+    assert_eq!(entry["retry_count"], 2);
+    assert_eq!(entry["status"], "FailedPermanent");
+    assert_eq!(entry["last_error"], "e2");
+    assert_eq!(ts.orphan_events().len(), 2);
+    let orphan2 = &ts.orphan_events()[1];
+    assert_eq!(orphan2.orig_hash, ticket);
+    assert_eq!(orphan2.error_msg, "e2");
+    assert_eq!(orphan2.timestamp, 99);
 }

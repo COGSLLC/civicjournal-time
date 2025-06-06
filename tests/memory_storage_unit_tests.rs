@@ -174,3 +174,28 @@ async fn test_load_leaf_by_hash_behavior() {
     assert!(storage.load_leaf_by_hash(&missing_hash).await.unwrap().is_none());
 }
 
+
+#[tokio::test]
+async fn test_empty_page_included_in_summary() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let storage = MemoryStorage::new();
+    let cfg = get_test_config();
+    let now = Utc::now();
+    let mut page = JournalPage::new(0, None, now, &cfg);
+    page.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page).await.unwrap();
+    let summaries = storage.list_finalized_pages_summary(0).await.unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].page_id, page.page_id);
+    assert_eq!(summaries[0].level, 0);
+}
+
+#[tokio::test]
+async fn test_summary_empty_storage_returns_empty() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let storage = MemoryStorage::new();
+    let result = storage.list_finalized_pages_summary(0).await.unwrap();
+    assert!(result.is_empty());
+}

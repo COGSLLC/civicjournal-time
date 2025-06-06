@@ -208,3 +208,29 @@ async fn test_concurrent_store_and_load() {
         assert!(storage.page_exists(0, id).await.unwrap());
     }
 }
+
+#[tokio::test]
+async fn test_list_finalized_pages_summary_fields() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let storage = MemoryStorage::new();
+    let cfg = get_test_config();
+    let now = Utc::now();
+
+    let mut p0 = JournalPage::new(0, None, now, &cfg);
+    p0.recalculate_merkle_root_and_page_hash();
+    let mut p1 = JournalPage::new(0, Some(p0.page_hash), now + chrono::Duration::seconds(1), &cfg);
+    p1.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&p0).await.unwrap();
+    storage.store_page(&p1).await.unwrap();
+
+    let l0 = storage.list_finalized_pages_summary(0).await.unwrap();
+    assert_eq!(l0.len(), 2);
+    assert_eq!(l0[0].page_id, p0.page_id);
+    assert_eq!(l0[0].level, 0);
+    assert_eq!(l0[1].page_id, p1.page_id);
+    assert_eq!(l0[1].level, 0);
+
+    let l1 = storage.list_finalized_pages_summary(1).await.unwrap();
+    assert!(l1.is_empty());
+}
