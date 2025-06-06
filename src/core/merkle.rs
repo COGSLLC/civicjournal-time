@@ -172,6 +172,7 @@ pub fn verify_merkle_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::convert::TryInto;
 
     fn create_hash(data: &[u8]) -> [u8; 32] {
         let mut hasher = Sha256::new();
@@ -369,6 +370,77 @@ mod tests {
         assert_eq!(proof3[0], (leaf3, ProofDirection::Left));
         assert_eq!(proof3[1], (h12_val, ProofDirection::Left));
         assert!(verify_merkle_proof(leaf4, &proof3, expected_root));
+    }
+
+    #[test]
+    fn test_merkle_known_hashes_all_proofs() {
+        // Use a fixed set of leaves so the expected root can be precomputed
+        let leaves = [
+            create_hash(b"leaf1"),
+            create_hash(b"leaf2"),
+            create_hash(b"leaf3"),
+            create_hash(b"leaf4"),
+        ];
+
+        // Pre-computed root for the above leaves using standard Merkle hashing
+        let expected_root: [u8; 32] = {
+            let bytes = hex::decode(
+                "c4e2cee656a5eba68e478af89e7e1ed9a0962b8496700eb0602d3540365871dd",
+            )
+            .unwrap();
+            bytes.as_slice().try_into().unwrap()
+        };
+
+        let tree = MerkleTree::new(leaves.to_vec()).unwrap();
+        assert_eq!(tree.get_root(), Some(expected_root));
+
+        // Expected intermediate hashes
+        let h12 = combine_hashes(leaves[0], leaves[1]);
+        let h34 = combine_hashes(leaves[2], leaves[3]);
+
+        // Proof for index 0
+        let proof0 = tree.get_proof(0).unwrap();
+        assert_eq!(
+            proof0,
+            vec![
+                (leaves[1], ProofDirection::Right),
+                (h34, ProofDirection::Right),
+            ]
+        );
+        assert!(verify_merkle_proof(leaves[0], &proof0, expected_root));
+
+        // Proof for index 1
+        let proof1 = tree.get_proof(1).unwrap();
+        assert_eq!(
+            proof1,
+            vec![
+                (leaves[0], ProofDirection::Left),
+                (h34, ProofDirection::Right),
+            ]
+        );
+        assert!(verify_merkle_proof(leaves[1], &proof1, expected_root));
+
+        // Proof for index 2
+        let proof2 = tree.get_proof(2).unwrap();
+        assert_eq!(
+            proof2,
+            vec![
+                (leaves[3], ProofDirection::Right),
+                (h12, ProofDirection::Left),
+            ]
+        );
+        assert!(verify_merkle_proof(leaves[2], &proof2, expected_root));
+
+        // Proof for index 3
+        let proof3 = tree.get_proof(3).unwrap();
+        assert_eq!(
+            proof3,
+            vec![
+                (leaves[2], ProofDirection::Left),
+                (h12, ProofDirection::Left),
+            ]
+        );
+        assert!(verify_merkle_proof(leaves[3], &proof3, expected_root));
     }
 
     #[test]
