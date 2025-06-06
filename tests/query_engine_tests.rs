@@ -166,7 +166,8 @@ async fn test_page_chain_integrity_detects_mismatch() {
 }
 
 #[tokio::test]
-async fn test_get_delta_report_partial_range_sorted() {
+async fn test_reconstruct_container_state_partial_merge_nested() {
+
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
     let config = Arc::new(Config::default());
@@ -175,9 +176,9 @@ async fn test_get_delta_report_partial_range_sorted() {
     let engine = QueryEngine::new(storage.clone(), tm, config.clone());
 
     let t0 = Utc::now();
-    let l1 = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
-    let l2 = JournalLeaf::new(t0 + Duration::seconds(1), Some(l1.leaf_hash), "c1".into(), json!({"b":2})).unwrap();
-    let l3 = JournalLeaf::new(t0 + Duration::seconds(2), Some(l2.leaf_hash), "c1".into(), json!({"c":3})).unwrap();
+    let l1 = JournalLeaf::new(t0, None, "ct".into(), json!({"obj":{"a":1}})).unwrap();
+    let l2 = JournalLeaf::new(t0 + Duration::seconds(1), Some(l1.leaf_hash), "ct".into(), json!({"obj":{"b":2}})).unwrap();
+    let l3 = JournalLeaf::new(t0 + Duration::seconds(2), Some(l2.leaf_hash), "ct".into(), json!({"obj":{"a":3}})).unwrap();
 
     let mut page1 = JournalPage::new(0, None, t0, &config);
     if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page1.content { v.push(l1.clone()); v.push(l2.clone()); }
@@ -189,14 +190,18 @@ async fn test_get_delta_report_partial_range_sorted() {
     page2.recalculate_merkle_root_and_page_hash();
     storage.store_page(&page2).await.unwrap();
 
-    let report = engine.get_delta_report("c1", t0 + Duration::seconds(1), t0 + Duration::seconds(2)).await.unwrap();
-    assert_eq!(report.deltas.len(), 2);
-    assert_eq!(report.deltas[0].leaf_hash, l2.leaf_hash);
-    assert_eq!(report.deltas[1].leaf_hash, l3.leaf_hash);
+    let state = engine.reconstruct_container_state("ct", t0 + Duration::seconds(1)).await.unwrap();
+    assert_eq!(state.state_data["obj"]["a"], 1);
+    assert_eq!(state.state_data["obj"]["b"], 2);
+
+    let state_all = engine.reconstruct_container_state("ct", t0 + Duration::seconds(3)).await.unwrap();
+    assert_eq!(state_all.state_data["obj"]["a"], 3);
+    assert_eq!(state_all.state_data["obj"]["b"], 2);
 }
 
 #[tokio::test]
-async fn test_delta_report_container_not_found_no_leaves_in_range() {
+async fn test_reconstruct_container_state_missing_with_other_leaves() {
+
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
     let config = Arc::new(Config::default());
@@ -205,6 +210,15 @@ async fn test_delta_report_container_not_found_no_leaves_in_range() {
     let engine = QueryEngine::new(storage.clone(), tm, config.clone());
 
     let t0 = Utc::now();
+    let leaf = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
+    let mut page = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page.content { v.push(leaf); }
+    page.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page).await.unwrap();
+
+    let res = engine.reconstruct_container_state("other", t0 + Duration::seconds(1)).await;
+    assert!(matches!(res, Err(civicjournal_time::query::types::QueryError::ContainerNotFound(_))));
+
     let l1 = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
     let l2 = JournalLeaf::new(t0 + Duration::seconds(1), Some(l1.leaf_hash), "c1".into(), json!({"b":2})).unwrap();
 
