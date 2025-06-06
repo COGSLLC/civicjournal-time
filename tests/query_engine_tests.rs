@@ -12,6 +12,7 @@ use std::sync::Arc;
 use civicjournal_time::error::CJError;
 use async_trait::async_trait;
 use std::path::Path;
+use civicjournal_time::core::merkle::{MerkleTree, verify_merkle_proof};
 
 #[derive(Clone, Debug)]
 struct MemoryStorageWithExtraSummary {
@@ -68,6 +69,8 @@ impl StorageBackend for MemoryStorageWithExtraSummary {
         self.inner.load_leaf_by_hash(leaf_hash).await
     }
 }
+
+
 
 #[tokio::test]
 async fn test_reconstruct_and_delta_report() {
@@ -224,7 +227,9 @@ async fn test_page_chain_integrity_detects_mismatch() {
 }
 
 #[tokio::test]
-async fn test_page_chain_integrity_detects_corrupted_page() {
+
+async fn test_reconstruct_container_state_partial_merge_nested() {
+
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
     let config = Arc::new(Config::default());
@@ -233,7 +238,9 @@ async fn test_page_chain_integrity_detects_corrupted_page() {
     let engine = QueryEngine::new(storage.clone(), tm, config.clone());
 
     let t0 = Utc::now();
-    let mut page1 = JournalPage::new(0, None, t0, &config);
+async fn test_page_chain_integrity_detects_corrupted_page() {
+
+  let mut page1 = JournalPage::new(0, None, t0, &config);
     page1.recalculate_merkle_root_and_page_hash();
     storage.store_page(&page1).await.unwrap();
 
@@ -286,3 +293,153 @@ async fn test_page_chain_integrity_page_missing() {
     assert!(reports[1].issues.iter().any(|i| i.contains("page missing")));
 }
 
+    let l1 = JournalLeaf::new(t0, None, "ct".into(), json!({"obj":{"a":1}})).unwrap();
+    let l2 = JournalLeaf::new(t0 + Duration::seconds(1), Some(l1.leaf_hash), "ct".into(), json!({"obj":{"b":2}})).unwrap();
+    let l3 = JournalLeaf::new(t0 + Duration::seconds(2), Some(l2.leaf_hash), "ct".into(), json!({"obj":{"a":3}})).unwrap();
+
+    let mut page1 = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page1.content { v.push(l1.clone()); v.push(l2.clone()); }
+    page1.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page1).await.unwrap();
+
+    let mut page2 = JournalPage::new(0, Some(page1.page_hash), t0 + Duration::seconds(2), &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page2.content { v.push(l3.clone()); }
+    page2.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page2).await.unwrap();
+
+    let state = engine.reconstruct_container_state("ct", t0 + Duration::seconds(1)).await.unwrap();
+    assert_eq!(state.state_data["obj"]["a"], 1);
+    assert_eq!(state.state_data["obj"]["b"], 2);
+
+    let state_all = engine.reconstruct_container_state("ct", t0 + Duration::seconds(3)).await.unwrap();
+    assert_eq!(state_all.state_data["obj"]["a"], 3);
+    assert_eq!(state_all.state_data["obj"]["b"], 2);
+}
+
+#[tokio::test]
+async fn test_reconstruct_container_state_missing_with_other_leaves() {
+
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let config = Arc::new(Config::default());
+    let storage = Arc::new(MemoryStorage::new());
+    let tm = Arc::new(TimeHierarchyManager::new(config.clone(), storage.clone()));
+    let engine = QueryEngine::new(storage.clone(), tm, config.clone());
+
+    let t0 = Utc::now();
+    let leaf = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
+    let mut page = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page.content { v.push(leaf); }
+    page.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page).await.unwrap();
+
+    let res = engine.reconstruct_container_state("other", t0 + Duration::seconds(1)).await;
+    assert!(matches!(res, Err(civicjournal_time::query::types::QueryError::ContainerNotFound(_))));
+
+    let l1 = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
+    let l2 = JournalLeaf::new(t0 + Duration::seconds(1), Some(l1.leaf_hash), "c1".into(), json!({"b":2})).unwrap();
+
+    let mut page1 = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page1.content { v.push(l1.clone()); v.push(l2.clone()); }
+    page1.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page1).await.unwrap();
+
+    let res = engine.get_delta_report("c1", t0 + Duration::seconds(3), t0 + Duration::seconds(4)).await;
+    assert!(matches!(res, Err(civicjournal_time::query::types::QueryError::ContainerNotFound(_))));
+}
+
+async fn test_leaf_inclusion_proof_success() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let config = Arc::new(Config::default());
+    let base_storage = Arc::new(MemoryStorage::new());
+    let tm = Arc::new(TimeHierarchyManager::new(config.clone(), base_storage.clone()));
+    let engine = QueryEngine::new(base_storage.clone(), tm, config.clone());
+
+    let t0 = Utc::now();
+    let leaf1 = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
+    let leaf2 = JournalLeaf::new(t0 + Duration::seconds(1), Some(leaf1.leaf_hash), "c1".into(), json!({"b":2})).unwrap();
+
+    let mut page = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page.content { v.push(leaf1.clone()); v.push(leaf2.clone()); }
+    page.recalculate_merkle_root_and_page_hash();
+    base_storage.store_page(&page).await.unwrap();
+
+    let proof = engine.get_leaf_inclusion_proof(&leaf2.leaf_hash).await.unwrap();
+    assert_eq!(proof.leaf.leaf_hash, leaf2.leaf_hash);
+    assert_eq!(proof.page_id, page.page_id);
+    assert_eq!(proof.level, 0);
+    assert_eq!(proof.page_merkle_root, page.merkle_root);
+
+    let tree = MerkleTree::new(vec![leaf1.leaf_hash, leaf2.leaf_hash]).unwrap();
+    assert_eq!(tree.get_root().unwrap(), page.merkle_root);
+    assert!(verify_merkle_proof(leaf2.leaf_hash, &proof.proof, proof.page_merkle_root));
+}
+
+#[derive(Debug, Clone)]
+struct HidingStorage {
+    inner: Arc<MemoryStorage>,
+}
+
+#[async_trait::async_trait]
+impl StorageBackend for HidingStorage {
+    async fn store_page(&self, page: &JournalPage) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.store_page(page).await
+    }
+
+    async fn load_page(&self, level: u8, page_id: u64) -> Result<Option<JournalPage>, civicjournal_time::error::CJError> {
+        self.inner.load_page(level, page_id).await
+    }
+
+    async fn page_exists(&self, level: u8, page_id: u64) -> Result<bool, civicjournal_time::error::CJError> {
+        self.inner.page_exists(level, page_id).await
+    }
+
+    async fn delete_page(&self, level: u8, page_id: u64) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.delete_page(level, page_id).await
+    }
+
+    async fn list_finalized_pages_summary(&self, level: u8) -> Result<Vec<civicjournal_time::core::page::JournalPageSummary>, civicjournal_time::error::CJError> {
+        self.inner.list_finalized_pages_summary(level).await
+    }
+
+    async fn backup_journal(&self, backup_path: &std::path::Path) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.backup_journal(backup_path).await
+    }
+
+    async fn restore_journal(&self, backup_path: &std::path::Path, target_journal_dir: &std::path::Path) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.restore_journal(backup_path, target_journal_dir).await
+    }
+
+    async fn load_page_by_hash(&self, page_hash: [u8; 32]) -> Result<Option<JournalPage>, civicjournal_time::error::CJError> {
+        self.inner.load_page_by_hash(page_hash).await
+    }
+
+    async fn load_leaf_by_hash(&self, _leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, civicjournal_time::error::CJError> {
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn test_leaf_inclusion_proof_missing_leaf_data() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let config = Arc::new(Config::default());
+    let base_storage = Arc::new(MemoryStorage::new());
+
+    let t0 = Utc::now();
+    let leaf = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
+
+    let mut page = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page.content { v.push(leaf.clone()); }
+    page.recalculate_merkle_root_and_page_hash();
+    base_storage.store_page(&page).await.unwrap();
+
+    let hiding_storage = Arc::new(HidingStorage { inner: base_storage.clone() });
+    let tm = Arc::new(TimeHierarchyManager::new(config.clone(), hiding_storage.clone()));
+    let engine = QueryEngine::new(hiding_storage.clone(), tm, config.clone());
+
+    let result = engine.get_leaf_inclusion_proof(&leaf.leaf_hash).await;
+    assert!(matches!(result, Err(civicjournal_time::query::types::QueryError::LeafDataNotFound(_))));
+
+}
