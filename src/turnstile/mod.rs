@@ -249,7 +249,7 @@ impl Turnstile {
                 }
             }
         }
-        let mut entry = self.pending.get_mut(&leaf_hash).expect("exists");
+        let entry = self.pending.get_mut(&leaf_hash).expect("exists");
         if entry.retry_count >= self.max_retries {
             self.log_orphan_leaf(&leaf_hash, "retry failed", timestamp)?;
             self.persist_state()?;
@@ -312,5 +312,16 @@ mod tests {
         ts.confirm_ticket(&ticket, true, None).unwrap();
         assert_eq!(ts.pending_count(), 0);
         assert_eq!(ts.latest_leaf_hash(), ticket);
+    }
+
+    #[test]
+    fn test_retry_detects_corruption() {
+        let mut ts = Turnstile::new("00".repeat(32), 1);
+        let ticket = ts.append("{\"x\":1}", 0).unwrap();
+        // Tamper with the stored payload to cause a hash mismatch
+        ts.pending.get_mut(&ticket).unwrap().payload_json = "{}".to_string();
+        let rc = ts.retry_next_pending(|_, _, _| 1).unwrap();
+        assert_eq!(rc, -2);
+        assert!(matches!(ts.pending.get(&ticket).unwrap().status, PendingStatus::FailedPermanent));
     }
 }
