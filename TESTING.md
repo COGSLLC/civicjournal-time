@@ -117,17 +117,17 @@ page_exists: verify page_exists is false before storing and true after storing a
 clear: store pages, call clear(), and ensure storage is empty and page_exists is false for all pages
  
 .
-Fail-on-store: use set_fail_on_store(level, page_id) to simulate errors (the tests show this)
- 
-. E.g., configure a fail on level 0 (any page) and ensure store_page returns an Err(CJError::StorageError). Verify the error message matches the format (contains “Simulated MemoryStorage write failure”)
- 
-. Then clear the failure condition and ensure store succeeds.
-list_finalized_pages_summary: after storing some pages, verify that list_finalized_pages_summary(level) returns summaries with correct page_id and level for all pages at that level.
+<!-- Fail-on-store: use set_fail_on_store(level, page_id) to simulate errors (the tests show this)
+
+E.g., configure a fail on level 0 (any page) and ensure store_page returns an Err(CJError::StorageError). Verify the error message matches the format (contains “Simulated MemoryStorage write failure”)
+
+Then clear the failure condition and ensure store succeeds. -->
+<!-- list_finalized_pages_summary: after storing some pages, verify that list_finalized_pages_summary(level) returns summaries with correct page_id and level for all pages at that level.
 backup_journal and restore_journal: For MemoryStorage, backup_journal is a no-op (logs a warning)
- 
-. Test that calling it returns Ok(()) and does not alter storage. restore_journal should return a “not supported” error
- 
-; test that it returns Err(CJError::NotImplemented) or similar.
+
+Test that calling it returns Ok(()) and does not alter storage. restore_journal should return a “not supported” error
+
+; test that it returns Err(CJError::NotImplemented) or similar. -->
 load_page_by_hash: test retrieving by page hash: after storing pages, take one page’s page_hash and call load_page_by_hash; it should return the full page
  
 .
@@ -151,22 +151,23 @@ Store a page with each compression algorithm (Zstd, Lz4, Snappy) enabled. For ea
 Corrupt header tests: manually create a file with wrong magic or version (or write junk to the first bytes of a valid .cjt file) and verify load_page returns Err(CJError::InvalidFileFormat)
  
 .
+
+<!--
 page_exists and delete_page: verify page_exists(level,page_id) matches filesystem state. Test deleting a page file removes it (and page_exists returns false afterward)
- 
-. Deleting a non-existent page should still return Ok(()).
+
+Deleting a non-existent page should still return Ok(()).
 list_finalized_pages_summary: after storing multiple pages across levels, ensure summaries include all existing pages. Also test that if the level directory is missing or empty, it returns an empty list
- 
-.
+
 load_page_by_hash: store several pages at various levels; take one page_hash and call load_page_by_hash. Verify it finds and returns the correct page
 
-<!-- Test that it skips files with wrong magic or extension (code uses MAGIC_STRING and known extensions) and returns Ok(None) if not found -->
- 
-.
+Test that it skips files with wrong magic or extension (code uses MAGIC_STRING and known extensions) and returns Ok(None) if not found
+
 load_leaf_by_hash: similar to MemoryStorage: for L0 pages with leaves, verify each leaf’s hash is found
+-->
  
 . If no L0 dir exists, it should return Ok(None)
- 
-. Verify skipping of non-page_ files (code checks file name prefix)
+
+<!-- Verify skipping of non-page_ files (code checks file name prefix) -->
  
 .
 backup_journal(backup_path):
@@ -207,18 +208,18 @@ list_pending(max): test it returns up to max hashes of status Pending.
 TimeHierarchy + Storage Integration: use a shared test config with MemoryStorage or a temp FileStorage to simulate actual journal usage:
 Append a series of leaves (via async API or directly via TimeHierarchyManager) and then use the query engine (Journal::get_delta_report, etc.) to fetch reports. Verify consistency of data across components.
 Test roll-up across levels: e.g. append enough leaves to fill and finalize L0 pages, then check that L1 pages are created with correct thrall hashes (using get_page_chain_integrity).
-Configuration + Init Integration: call civicjournal_time::init(config_path) with a path to a custom TOML file (or none) and verify the global config is initialized and accessible via config(). Test that environment overrides are applied at init (e.g. set CJ_LOGGING_LEVEL before init).
-End-to-End Workflow (API): simulate an application scenario:
+<!-- Configuration + Init Integration: call civicjournal_time::init(config_path) with a path to a custom TOML file (or none) and verify the global config is initialized and accessible via config(). Test that environment overrides are applied at init (e.g. set CJ_LOGGING_LEVEL before init). -->
+<!-- End-to-End Workflow (API): simulate an application scenario:
 Initialize the system with a test config (e.g. in-memory storage).
 Append several deltas for multiple containers over time via the async/sync API.
 Query the container states and delta reports; verify they match expected outcomes (this exercises append + query integration).
-Perform a backup to a file, then restore into a new directory; verify the restored data yields identical query results.
+Perform a backup to a file, then restore into a new directory; verify the restored data yields identical query results. -->
 3. Edge Cases & Error Handling
-Invalid Inputs:
+<!-- Invalid Inputs:
 Passing a non-JSON or malformed JSON string to Turnstile::append or compute_hash should cause an error (the code uses serde_json::from_str
- 
-). Test that it returns Err.
-Calling QueryEngine methods with nonsensical parameters (empty container IDs, levels out of range, etc.) and verify proper InvalidParameters or ContainerNotFound errors.
+
+). Test that it returns Err. -->
+<!-- Calling QueryEngine methods with nonsensical parameters (empty container IDs, levels out of range, etc.) and verify proper InvalidParameters or ContainerNotFound errors. -->
 <!-- File I/O errors: e.g. simulate write permission denied (set storage path to a read-only directory) and verify operations return CJError::StorageError. -->
 <!-- In load_page, if the file is too short (len<6) or has wrong magic/version, it returns InvalidFileFormat
 

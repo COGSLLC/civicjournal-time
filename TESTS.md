@@ -539,8 +539,9 @@ components:
 - `tests/memory_storage_*` – unit tests for the in‑memory storage backend.
 - `tests/file_storage_*` – unit and integration tests for the file storage
   backend, including an error test for permission-denied writes, a check
-  that `load_page_by_hash` skips invalid files, and validation that loading
-  a page fails when the file header is too short.
+  that `load_page_by_hash` skips invalid files, validation that loading
+  a page fails when the file header is too short, and a test verifying
+  `load_leaf_by_hash` ignores files not prefixed with `page_`.
 - `tests/time_manager_*` – tests for the time hierarchy manager including
   rollup and retention behaviour.
 - `tests/query_engine_tests.rs` – query engine tests such as delta reports and

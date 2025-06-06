@@ -5,7 +5,7 @@ use civicjournal_time::core::page::{JournalPage, PageContent};
 use civicjournal_time::CompressionAlgorithm;
 use civicjournal_time::config::{CompressionConfig, Config};
 use civicjournal_time::error::CJError;
-use civicjournal_time::test_utils::reset_global_ids;
+use civicjournal_time::test_utils::{reset_global_ids, SHARED_TEST_ID_MUTEX};
 use chrono::Utc;
 use serde_json::json;
 use tempfile::tempdir;
@@ -89,6 +89,7 @@ async fn test_corrupt_header() {
 
 #[tokio::test]
 async fn test_load_page_too_short() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
     let dir = tempdir().unwrap();
     let cfg = cfg(CompressionAlgorithm::None, false);
@@ -161,6 +162,27 @@ async fn test_load_leaf_by_hash() {
 }
 
 #[tokio::test]
+async fn test_load_leaf_by_hash_skips_non_page_files() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let dir = tempdir().unwrap();
+    let cfg = cfg(CompressionAlgorithm::None, false);
+    let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
+
+    let page = make_page(0, &cfg);
+    let leaf_hash = match &page.content { PageContent::Leaves(v) => v[0].leaf_hash, _ => [0u8;32] };
+    // Manually store the page under a non-standard name
+    let level_dir = dir.path().join("journal/level_0");
+    std::fs::create_dir_all(&level_dir).unwrap();
+    let path = level_dir.join("foo_0.cjt");
+    let data = serde_json::to_vec(&page).unwrap();
+    std::fs::write(&path, &data).unwrap();
+
+    let res = storage.load_leaf_by_hash(&leaf_hash).await.unwrap();
+    assert!(res.is_none());
+}
+
+#[tokio::test]
 async fn test_backup_empty_and_restore() {
     reset_global_ids();
     let dir = tempdir().unwrap();
@@ -216,6 +238,7 @@ async fn test_restore_nonexistent_path_error() {
 
 #[tokio::test]
 async fn test_new_permission_denied() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
     let cfg = cfg(CompressionAlgorithm::None, false);
     let res = FileStorage::new("/proc/deny_test", cfg.compression.clone()).await;
@@ -224,6 +247,7 @@ async fn test_new_permission_denied() {
 
 #[tokio::test]
 async fn test_load_page_by_hash_skips_bad_files() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
     let dir = tempdir().unwrap();
     let cfg = cfg(CompressionAlgorithm::None, false);
