@@ -438,6 +438,9 @@ mod tests {
     use super::*;
     use chrono::{Utc, Duration};
     use crate::core::leaf::{LeafData, LeafDataV1};
+    use crate::core::merkle::MerkleTree;
+    use crate::storage::memory::MemoryStorage;
+    use crate::storage::StorageBackend;
 
     // Removed local PAGE_TEST_MUTEX, lazy_static, and unused Mutex/Ordering imports
 
@@ -555,5 +558,69 @@ mod tests {
         assert_ne!(page5.merkle_root, default_merkle_root, "Merkle root for page5 should not be default after adding a leaf");
         assert_eq!(page1.merkle_root, [0u8; 32], "Merkle root for empty content should be default");
         assert!(page5.last_leaf_timestamp.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_add_leaf_and_thrall_updates_hashes() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+        let cfg = get_test_config();
+        let now = Utc::now();
+
+        let mut l0 = JournalPage::new(0, None, now, &cfg);
+        let orig_hash = l0.page_hash;
+        let leaf = create_dummy_leaf(now + Duration::milliseconds(1), &[1u8;32], "a");
+        l0.add_leaf(leaf.clone());
+        l0.recalculate_merkle_root_and_page_hash();
+
+        let expected_root = MerkleTree::new(vec![leaf.leaf_hash]).unwrap().get_root().unwrap();
+        assert_eq!(l0.merkle_root, expected_root);
+        assert_ne!(l0.page_hash, orig_hash);
+        assert_eq!(l0.prev_page_hash, None);
+
+        let mut l1 = JournalPage::new(1, Some(l0.page_hash), now + Duration::seconds(60), &cfg);
+        let orig_l1_hash = l1.page_hash;
+        l1.add_thrall_hash(l0.page_hash, now + Duration::seconds(1));
+        l1.recalculate_merkle_root_and_page_hash();
+
+        let expected_root_l1 = MerkleTree::new(vec![l0.page_hash]).unwrap().get_root().unwrap();
+        assert_eq!(l1.merkle_root, expected_root_l1);
+        assert_ne!(l1.page_hash, orig_l1_hash);
+        assert_eq!(l1.prev_page_hash, Some(l0.page_hash));
+    }
+
+    #[tokio::test]
+    async fn test_page_serialization_roundtrip() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+        let cfg = get_test_config();
+        let now = Utc::now();
+
+        let mut page = JournalPage::new(0, None, now, &cfg);
+        let leaf = create_dummy_leaf(now, &[42u8;32], "ser");
+        page.add_leaf(leaf);
+        page.recalculate_merkle_root_and_page_hash();
+
+        let encoded = serde_json::to_vec(&page).unwrap();
+        let decoded: JournalPage = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(page, decoded);
+    }
+
+    #[tokio::test]
+    async fn test_empty_page_summary_after_store() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+        let cfg = get_test_config();
+        let storage = crate::storage::memory::MemoryStorage::new();
+        let now = Utc::now();
+
+        let mut page = JournalPage::new(0, None, now, &cfg);
+        page.recalculate_merkle_root_and_page_hash();
+        storage.store_page(&page).await.unwrap();
+
+        let summaries = storage.list_finalized_pages_summary(0).await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].page_id, page.page_id);
+        assert_eq!(summaries[0].page_hash, page.page_hash);
     }
 }
