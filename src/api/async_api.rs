@@ -2,13 +2,22 @@
 
 use crate::config::Config;
 use crate::core::leaf::JournalLeaf;
-use crate::core::page::{JournalPage, PageContentHash};
+use crate::core::page::JournalPage;
 use crate::core::time_manager::TimeHierarchyManager;
 use crate::error::{CJError, Result as CJResult};
 use crate::storage::create_storage_backend;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::sync::Arc; 
+use std::sync::Arc;
+
+/// Hash reference for appended leaves or thrall pages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageContentHash {
+    /// Hash of a journal leaf
+    LeafHash([u8; 32]),
+    /// Hash of a rolled up page
+    ThrallPageHash([u8; 32]),
+}
 
 /// Provides an asynchronous API for interacting with the CivicJournal.
 pub struct Journal {
@@ -78,7 +87,7 @@ impl Journal {
         });
 
         let leaf = JournalLeaf::new(timestamp, prev_hash_bytes, container_id, data)?;
-        self.manager.add_leaf(&leaf).await?;
+        self.manager.add_leaf(&leaf, timestamp).await?;
         Ok(PageContentHash::LeafHash(leaf.leaf_hash))
     }
     /// Retrieves a specific `JournalPage` from storage.
@@ -94,7 +103,7 @@ impl Journal {
     /// Returns `CJError::PageNotFound` if the page does not exist.
     /// Returns `CJError::StorageError` if there was an issue loading from storage.
     pub async fn get_page(&self, level: u8, page_id: u64) -> CJResult<JournalPage> {
-        match self.manager.get_page_from_storage(level, page_id).await {
+        match self.manager.load_page_from_storage(level, page_id).await {
             Ok(Some(page)) => Ok(page),
             Ok(None) => Err(CJError::PageNotFound { level, page_id }),
             Err(e) => Err(CJError::StorageError(format!(
@@ -131,15 +140,14 @@ mod tests {
     use super::*;
     use crate::config::Config; // Ensure Config is imported for get_rollup_test_config
     use crate::test_utils::get_test_config; // Use the shared test config
-    use crate::types::time::RollupConfig;
+    use crate::types::time::LevelRollupConfig;
     use crate::StorageType;
     use crate::TimeLevel;
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
     use chrono::Duration;
     use serde_json::json;
-    use crate::storage::memory::MemoryStorage; 
-    use crate::core::reset_global_ids; 
-    use crate::core::SHARED_TEST_ID_MUTEX;
+    use crate::storage::memory::MemoryStorage;
+    use crate::test_utils::{reset_global_ids, SHARED_TEST_ID_MUTEX};
 
     // Specific config for rollup tests
     fn get_rollup_test_config() -> &'static Config {
@@ -149,23 +157,23 @@ mod tests {
             config.storage.storage_type = StorageType::Memory;
             config.storage.base_path = "".to_string(); 
             config.time_hierarchy.levels = vec![
-                TimeLevel { // L0
+                TimeLevel {
                     name: "L0_rollup_test".to_string(),
                     duration_seconds: 60,
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 2, 
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 2,
                         max_page_age_seconds: 300,
-                        force_rollup_on_shutdown: false
+                        content_type: crate::types::time::RollupContentType::ChildHashes,
                     },
                     retention_policy: None,
                 },
-                TimeLevel { // L1
+                TimeLevel {
                     name: "L1_rollup_test".to_string(),
                     duration_seconds: 300,
-                    rollup_config: RollupConfig {
-                        max_leaves_per_page: 10, 
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 10,
                         max_page_age_seconds: 86400,
-                        force_rollup_on_shutdown: false
+                        content_type: crate::types::time::RollupContentType::ChildHashes,
                     },
                     retention_policy: None,
                 }
@@ -271,7 +279,7 @@ mod tests {
 
         let mut config = get_test_config().clone(); 
         if !config.time_hierarchy.levels.is_empty() {
-            config.time_hierarchy.levels[0].rollup_config.max_leaves_per_page = 1;
+            config.time_hierarchy.levels[0].rollup_config.max_items_per_page = 1;
         } else {
             panic!("Test config has no time hierarchy levels defined!");
         }
@@ -283,7 +291,9 @@ mod tests {
 
         let storage_backend: Arc<dyn crate::storage::StorageBackend> = Arc::new(memory_storage);
         let manager = TimeHierarchyManager::new(Arc::new(config.clone()), Arc::clone(&storage_backend));
-        let journal = Journal { manager };
+        let manager_arc = Arc::new(manager);
+        let query = crate::query::QueryEngine::new(storage_backend.clone(), manager_arc.clone(), Arc::new(config.clone()));
+        let journal = Journal { manager: manager_arc, query };
 
         let timestamp = Utc::now();
         let append_result = journal.append_leaf(

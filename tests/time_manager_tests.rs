@@ -843,3 +843,68 @@ async fn test_age_based_rollup_cascade() {
         Err(_) => panic!("[TEST-DEBUG] Test timed out after 15 seconds!"),
     }
 }
+#[tokio::test]
+async fn test_parent_rollup_when_page_capacity_exceeded() {
+    let mut config = create_test_config(false, 0, None, None);
+    if config.time_hierarchy.levels.len() > 1 {
+        config.time_hierarchy.levels[1].rollup_config.max_items_per_page = 2;
+    }
+    config.storage.storage_type = TestStorageType::Memory;
+    config.storage.base_path = "".to_string();
+    let config = Arc::new(config);
+    let storage = Arc::new(MemoryStorage::new());
+    let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
+
+    let ts = Utc::now();
+    let leaf1 = JournalLeaf::new(ts, None, "c".to_string(), json!({"n":1})).unwrap();
+    manager.add_leaf(&leaf1, leaf1.timestamp).await.unwrap();
+
+    assert!(storage.load_page(1, 1).await.unwrap().is_none());
+    {
+        let guard = manager.active_pages.lock().await;
+        let page = guard.get(&1u8).expect("active L1 page after first leaf");
+        assert_eq!(page.content_len(), 1);
+    }
+
+    let leaf2 = JournalLeaf::new(ts + Duration::seconds(1), None, "c".to_string(), json!({"n":2})).unwrap();
+    manager.add_leaf(&leaf2, leaf2.timestamp).await.unwrap();
+
+    let stored_l1_p1 = storage.load_page(1, 1).await.unwrap().expect("L1P1 stored");
+    assert!(manager.active_pages.lock().await.get(&1u8).is_none());
+    if let PageContent::ThrallHashes(hashes) = &stored_l1_p1.content {
+        assert_eq!(hashes.len(), 2);
+    } else { panic!("expected thrall hashes"); }
+
+    let leaf3 = JournalLeaf::new(ts + Duration::seconds(2), None, "c".to_string(), json!({"n":3})).unwrap();
+    manager.add_leaf(&leaf3, leaf3.timestamp).await.unwrap();
+
+    assert!(storage.load_page(1, 3).await.unwrap().is_none());
+    {
+        let guard = manager.active_pages.lock().await;
+        let page = guard.get(&1u8).expect("new active L1 page");
+        assert_eq!(page.page_id, 4); // next page ID after finalized parent
+        assert_eq!(page.content_len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn test_age_based_rollup_finalizes_parent_page() {
+    let (manager, storage) = create_age_based_rollup_config_and_manager(2, 100, 4, 100);
+    let base = Utc::now();
+
+    let l1 = JournalLeaf::new(base, None, "c".to_string(), json!({"v":1})).unwrap();
+    manager.add_leaf(&l1, l1.timestamp).await.unwrap();
+
+    let l2 = JournalLeaf::new(base + Duration::seconds(3), None, "c".to_string(), json!({"v":2})).unwrap();
+    manager.add_leaf(&l2, l2.timestamp).await.unwrap();
+
+    let l3 = JournalLeaf::new(base + Duration::seconds(8), None, "c".to_string(), json!({"v":3})).unwrap();
+    manager.add_leaf(&l3, l3.timestamp).await.unwrap();
+
+    let l1_page = storage.load_page(1, 1).await.unwrap().expect("L1 page finalized");
+    if let PageContent::ThrallHashes(hashes) = &l1_page.content {
+        assert!(!hashes.is_empty());
+    } else {
+        panic!("expected thrall hashes");
+    }
+}

@@ -79,21 +79,15 @@ impl QueryEngine {
 
         let mut level0_page_ids_to_check: Vec<u64> = Vec::new();
 
-        // Collect active level 0 page ID
+        // Collect active level 0 page ID (if any)
         if let Some(active_page_id) = self.time_manager.get_current_active_page_id(0).await {
             level0_page_ids_to_check.push(active_page_id);
         }
 
-        // Collect archived level 0 page IDs
-        // Assuming TimeHierarchyManager has a method like get_archived_page_ids_for_level
-        // This method might not exist yet and needs to be confirmed or implemented in TimeHierarchyManager.
-        // For now, let's assume it exists for the logic flow.
-        // if let Some(archived_ids) = self.time_manager.get_archived_page_ids_for_level(0) {
-        //     level0_page_ids_to_check.extend(archived_ids);
-        // }
-        // TODO: Add a proper way to get all relevant page IDs from TimeHierarchyManager.
-        // For now, we'll just use the active page if available.
-        
+        // Collect finalized level 0 pages from storage
+        let finalized_pages = self.storage.list_finalized_pages_summary(0).await?;
+        level0_page_ids_to_check.extend(finalized_pages.into_iter().map(|p| p.page_id));
+
         // Deduplicate in case a page was active and then immediately archived (edge case)
         level0_page_ids_to_check.sort_unstable();
         level0_page_ids_to_check.dedup();
