@@ -88,6 +88,21 @@ async fn test_corrupt_header() {
 }
 
 #[tokio::test]
+async fn test_load_page_too_short() {
+    reset_global_ids();
+    let dir = tempdir().unwrap();
+    let cfg = cfg(CompressionAlgorithm::None, false);
+    let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
+
+    let level_dir = dir.path().join("journal/level_0");
+    std::fs::create_dir_all(&level_dir).unwrap();
+    std::fs::write(level_dir.join("page_0.cjt"), b"CJTP").unwrap(); // less than 6 bytes
+
+    let err = storage.load_page(0, 0).await.unwrap_err();
+    assert!(matches!(err, CJError::InvalidFileFormat(_)));
+}
+
+#[tokio::test]
 async fn test_page_exists_and_delete() {
     reset_global_ids();
     let dir = tempdir().unwrap();
@@ -196,5 +211,31 @@ async fn test_restore_nonexistent_path_error() {
     let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
     let res = storage.restore_journal(Path::new("/no/such/file.zip"), dir.path()).await;
     assert!(matches!(res.unwrap_err(), CJError::StorageError(_)));
+}
+
+
+#[tokio::test]
+async fn test_new_permission_denied() {
+    reset_global_ids();
+    let cfg = cfg(CompressionAlgorithm::None, false);
+    let res = FileStorage::new("/proc/deny_test", cfg.compression.clone()).await;
+    assert!(matches!(res, Err(CJError::StorageError(_))));
+}
+
+#[tokio::test]
+async fn test_load_page_by_hash_skips_bad_files() {
+    reset_global_ids();
+    let dir = tempdir().unwrap();
+    let cfg = cfg(CompressionAlgorithm::None, false);
+    let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
+
+    let level_dir = dir.path().join("journal/level_0");
+    std::fs::create_dir_all(&level_dir).unwrap();
+
+    std::fs::write(level_dir.join("page_bad.txt"), b"junk").unwrap();
+    std::fs::write(level_dir.join("page_0.cjt"), b"XXXX12").unwrap();
+
+    let res = storage.load_page_by_hash([9u8; 32]).await.unwrap();
+    assert!(res.is_none());
 }
 

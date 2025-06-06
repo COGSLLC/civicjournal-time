@@ -71,7 +71,7 @@ Create a series of pages at a level with known prev_page_hash chain, and modify 
 Test the InvalidParameters case: e.g. from=5, to=3 should return an Err(QueryError::InvalidParameters)
  
 .
-Test pages missing from storage: include a summary with a page_id that has no stored file, and verify the report for that page has is_valid=false with issue “page missing”
+<!-- Test pages missing from storage: include a summary with a page_id that has no stored file, and verify the report for that page has is_valid=false with issue “page missing” -->
  
 .
 api::sync_api.rs
@@ -158,8 +158,8 @@ list_finalized_pages_summary: after storing multiple pages across levels, ensure
  
 .
 load_page_by_hash: store several pages at various levels; take one page_hash and call load_page_by_hash. Verify it finds and returns the correct page
- 
-. Test that it skips files with wrong magic or extension (code uses MAGIC_STRING and known extensions) and returns Ok(None) if not found
+
+<!-- Test that it skips files with wrong magic or extension (code uses MAGIC_STRING and known extensions) and returns Ok(None) if not found -->
  
 .
 load_leaf_by_hash: similar to MemoryStorage: for L0 pages with leaves, verify each leaf’s hash is found
@@ -219,10 +219,10 @@ Passing a non-JSON or malformed JSON string to Turnstile::append or compute_hash
  
 ). Test that it returns Err.
 Calling QueryEngine methods with nonsensical parameters (empty container IDs, levels out of range, etc.) and verify proper InvalidParameters or ContainerNotFound errors.
-File I/O errors: e.g. simulate write permission denied (set storage path to a read-only directory) and verify operations return CJError::StorageError.
-In load_page, if the file is too short (len<6) or has wrong magic/version, it returns InvalidFileFormat
- 
-. Test these by writing custom invalid files.
+<!-- File I/O errors: e.g. simulate write permission denied (set storage path to a read-only directory) and verify operations return CJError::StorageError. -->
+<!-- In load_page, if the file is too short (len<6) or has wrong magic/version, it returns InvalidFileFormat
+
+. Test these by writing custom invalid files. -->
 Boundary Conditions:
 Test pages with zero leaves (empty pages) and maximum allowed leaves (if any).
 Time edges: leaves with timestamps exactly on roll-up boundaries.
