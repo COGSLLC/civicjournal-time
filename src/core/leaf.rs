@@ -164,4 +164,39 @@ mod tests {
         assert_eq!(leaf_with_prev_hash.prev_hash, Some(prev_hash_value));
         assert_ne!(leaf_with_prev_hash.leaf_hash, leaf.leaf_hash, "Leaf hash should differ when prev_hash differs");
     }
+    #[tokio::test]
+    async fn test_journal_leaf_id_and_hash_uniqueness() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+        let ts = Utc::now();
+        let payload = json!({"a":1});
+        let leaf1 = JournalLeaf::new(ts, None, "c1".to_string(), payload.clone()).unwrap();
+        let leaf2 = JournalLeaf::new(ts, None, "c1".to_string(), payload.clone()).unwrap();
+        assert_eq!(leaf2.leaf_id, leaf1.leaf_id + 1);
+        assert_ne!(leaf1.leaf_hash, leaf2.leaf_hash);
+        let leaf3 = JournalLeaf::new(ts, Some([3u8;32]), "c1".to_string(), payload.clone()).unwrap();
+        assert_ne!(leaf1.leaf_hash, leaf3.leaf_hash);
+        let leaf4 = JournalLeaf::new(ts, None, "c2".to_string(), payload.clone()).unwrap();
+        assert_ne!(leaf1.leaf_hash, leaf4.leaf_hash);
+        let payload2 = json!({"a":2});
+        let leaf5 = JournalLeaf::new(ts, None, "c1".to_string(), payload2).unwrap();
+        assert_ne!(leaf1.leaf_hash, leaf5.leaf_hash);
+    }
+
+    #[tokio::test]
+    async fn test_leaf_data_v1_round_trip() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        let ts = Utc::now();
+        let leaf_data = LeafData::V1(LeafDataV1 {
+            timestamp: ts,
+            content_type: "text/plain".to_string(),
+            content: b"hello".to_vec(),
+            author: "tester".to_string(),
+            signature: "sig".to_string(),
+        });
+        let serialized = serde_json::to_string(&leaf_data).unwrap();
+        let deserialized: LeafData = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(leaf_data, deserialized);
+    }
+
 }
