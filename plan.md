@@ -54,16 +54,16 @@
    - [ ] Add OpenAPI/Swagger documentation for HTTP endpoints
 
 2. **Testing & Validation**
-   - [ ] Add unit tests for all API endpoints
-   - [ ] Implement integration tests for end-to-end flows
-   - [ ] Add performance benchmarks for critical paths
+   - [x] Add unit tests for all API endpoints
+   - [x] Implement integration tests for end-to-end flows
+  - [x] Add performance benchmarks for critical paths
    - [ ] Document test coverage and add coverage reporting
 
 3. **Testing Gaps**
-   - [ ] Add tests for parent levels with `max_leaves_per_page > 1`
-   - [ ] Implement tests for hierarchical rollups triggered by `max_page_age_seconds`
-   - [ ] Add edge case tests for rollup behavior
-   - [ ] Test error conditions and recovery scenarios
+   - [x] Add tests for parent levels with `max_leaves_per_page > 1`
+   - [x] Implement tests for hierarchical rollups triggered by `max_page_age_seconds`
+   - [x] Add edge case tests for rollup behavior
+   - [x] Test error conditions and recovery scenarios
 
 3. **Documentation Updates**
    - [x] Update `plan.md` with current status (completed)

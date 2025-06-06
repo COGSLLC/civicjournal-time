@@ -63,7 +63,7 @@ walkdir = "2" # For directory traversal
 [dev-dependencies]
 lazy_static = "1.4.0"
 # Testing
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 serial_test = "2.0"
 tempfile = "3.3"
 assert_matches = "1.5.0"
@@ -96,3 +96,7 @@ crypto = ["ring"]
 
 # Concurrency
 concurrent = ["parking_lot"]
+
+[[bench]]
+name = "critical_paths"
+harness = false

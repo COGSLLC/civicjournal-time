@@ -830,7 +830,6 @@ async fn test_age_based_rollup_cascade() {
         manager.add_leaf(&leaf3, leaf3.timestamp).await.unwrap();
 
         // Leaf 4 (time t + 63s) - should trigger L0 rollup (age 2s), then L1 rollup (age 4s for L1 page containing L0P0)
-        // THIS IS WHERE THE HANG OCCURS
         let leaf4_ts = initial_time + Duration::seconds(63);
         let leaf4 = JournalLeaf::new(leaf4_ts, None, "container1".to_string(), json!({"data": "leaf4"})).unwrap();
         manager.add_leaf(&leaf4, leaf4.timestamp).await.unwrap();

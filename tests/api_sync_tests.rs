@@ -38,3 +38,21 @@ fn test_sync_page_chain_integrity_invalid_range() {
     let res = journal.get_page_chain_integrity(0, Some(2), Some(1));
     assert!(matches!(res, Err(CJError::InvalidInput(_))));
 }
+
+#[test]
+fn test_sync_get_page_not_found() {
+    let cfg: &'static Config = get_test_config();
+    let journal = Journal::new(cfg).expect("journal init");
+    let res = journal.get_page(0, 99);
+    assert!(matches!(res, Err(CJError::PageNotFound { level: 0, page_id: 99 })));
+}
+
+#[test]
+fn test_sync_delta_report_container_not_found() {
+    let cfg = get_test_config();
+    let journal = Journal::new(cfg).expect("journal init");
+    let now = Utc::now();
+    let res = journal.get_delta_report("missing", now, now + chrono::Duration::seconds(1));
+    assert!(matches!(res, Err(CJError::InvalidInput(_))));
+}
+

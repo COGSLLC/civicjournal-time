@@ -134,3 +134,33 @@ async fn test_delta_report_container_not_found() {
     let res = engine.get_delta_report("missing", t0, t0 + Duration::seconds(1)).await;
     assert!(matches!(res, Err(civicjournal_time::query::types::QueryError::ContainerNotFound(_))));
 }
+
+#[tokio::test]
+async fn test_page_chain_integrity_detects_mismatch() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let config = Arc::new(Config::default());
+    let storage = Arc::new(MemoryStorage::new());
+    let tm = Arc::new(TimeHierarchyManager::new(config.clone(), storage.clone()));
+    let engine = QueryEngine::new(storage.clone(), tm, config.clone());
+
+    let t0 = Utc::now();
+    let mut page1 = JournalPage::new(0, None, t0, &config);
+    page1.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page1).await.unwrap();
+
+    let mut page2 = JournalPage::new(0, None, t0 + Duration::seconds(1), &config);
+    page2.recalculate_merkle_root_and_page_hash();
+    // Intentionally set incorrect prev_page_hash
+    page2.prev_page_hash = Some([9u8; 32]);
+    storage.store_page(&page2).await.unwrap();
+
+    let reports = engine
+        .get_page_chain_integrity(0, Some(page1.page_id), Some(page2.page_id))
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 2);
+    assert!(reports[1].issues.iter().any(|i| i.contains("prev_page_hash")));
+    assert!(!reports[1].is_valid);
+}
+
