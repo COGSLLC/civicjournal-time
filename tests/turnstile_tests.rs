@@ -89,6 +89,51 @@ fn test_orphan_logging_disabled() {
 }
 
 #[test]
+fn test_confirm_ticket_not_found() {
+    let mut ts = Turnstile::new("00".repeat(32), 1);
+    let res = ts.confirm_ticket(&"ff".repeat(64), true, None);
+    assert!(matches!(res.unwrap_err(), civicjournal_time::error::CJError::NotFound(_)));
+}
+
+#[test]
+fn test_retry_next_pending_success() {
+    let mut ts = Turnstile::new("00".repeat(32), 1);
+    let ticket = ts.append("{\"a\":1}", 0).unwrap();
+    let rc = ts.retry_next_pending(|_, _, _| 1).unwrap();
+    assert_eq!(rc, 0);
+    assert_eq!(ts.pending_count(), 0);
+    assert_eq!(ts.latest_leaf_hash(), ticket);
+}
+
+#[test]
+fn test_retry_next_pending_no_entries() {
+    let mut ts = Turnstile::new("00".repeat(32), 1);
+    let rc = ts.retry_next_pending(|_, _, _| 1).unwrap();
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn test_list_pending_respects_max() {
+    let mut ts = Turnstile::new("00".repeat(32), 3);
+    let t1 = ts.append("{\"a\":1}", 0).unwrap();
+    let t2 = ts.append("{\"b\":2}", 1).unwrap();
+    let t3 = ts.append("{\"c\":3}", 2).unwrap();
+    let list = ts.list_pending(2);
+    assert_eq!(list.len(), 2);
+    assert!(list.contains(&t1) || list.contains(&t2) || list.contains(&t3));
+}
+
+#[test]
+fn test_leaf_exists_checks_committed_and_pending() {
+    let mut ts = Turnstile::new("00".repeat(32), 1);
+    let ticket = ts.append("{\"x\":1}", 0).unwrap();
+    assert!(ts.leaf_exists(&ticket).unwrap());
+    ts.confirm_ticket(&ticket, true, None).unwrap();
+    assert!(ts.leaf_exists(&ticket).unwrap());
+    assert!(!ts.leaf_exists(&"aa".repeat(32)).unwrap());
+}
+
+#[test]
 fn test_append_invalid_json_and_prev_hash() {
     // invalid JSON should produce an error
     let mut ts = Turnstile::new("00".repeat(32), 3);
