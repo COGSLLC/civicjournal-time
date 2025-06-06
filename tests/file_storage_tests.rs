@@ -7,7 +7,7 @@ use civicjournal_time::CompressionAlgorithm;
 use civicjournal_time::config::CompressionConfig;
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, Duration};
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -238,4 +238,36 @@ async fn test_error_handling() {
     
     // Cleanup
     temp_dir.close().unwrap();
+}
+
+#[tokio::test]
+async fn test_large_page_compression() {
+    let formats = [
+        CompressionAlgorithm::None,
+        CompressionAlgorithm::Zstd,
+        CompressionAlgorithm::Lz4,
+        CompressionAlgorithm::Snappy,
+    ];
+
+    for &format in &formats {
+        let temp_dir = tempdir().unwrap();
+        let config = create_test_config(format);
+        let storage = FileStorage::new(temp_dir.path().to_path_buf(), config.compression.clone())
+            .await
+            .unwrap();
+
+        let base = Utc::now();
+        let mut page = create_test_page(0, 1, base, &config);
+        if let PageContent::Leaves(ref mut leaves) = page.content {
+            for i in 0..1000 {
+                let leaf = create_test_leaf(base + Duration::milliseconds(i));
+                leaves.push(leaf);
+            }
+        }
+        page.recalculate_merkle_root_and_page_hash();
+        storage.store_page(&page).await.unwrap();
+        let loaded = storage.load_page(0, 1).await.unwrap().unwrap();
+        assert_eq!(loaded.content_len(), 1000);
+        temp_dir.close().unwrap();
+    }
 }

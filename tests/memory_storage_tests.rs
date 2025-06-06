@@ -117,6 +117,26 @@ async fn test_page_exists_and_delete() {
 }
 
 #[tokio::test]
+async fn test_page_exists_before_after_store() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let storage = MemoryStorage::new();
+    let cfg = get_test_config();
+    let page = JournalPage::new(0, None, Utc::now(), cfg);
+
+    assert!(!storage
+        .page_exists(page.level, page.page_id)
+        .await
+        .unwrap());
+
+    storage.store_page(&page).await.unwrap();
+    assert!(storage
+        .page_exists(page.level, page.page_id)
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
 async fn test_is_empty_and_clear() {
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
