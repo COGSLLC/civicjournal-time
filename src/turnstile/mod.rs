@@ -183,23 +183,33 @@ impl Turnstile {
 
     /// Confirm or reject a ticket.
     pub fn confirm_ticket(&mut self, leaf_hash: &str, status: bool, error_msg: Option<&str>) -> CJResult<()> {
+        if status {
+            self
+                .pending
+                .remove(leaf_hash)
+                .ok_or_else(|| CJError::not_found("ticket"))?;
+            self.prev_leaf_hash = leaf_hash.to_string();
+            self.committed.insert(leaf_hash.to_string());
+            return self.persist_state();
+        }
+
         let timestamp;
         {
-            let entry = self.pending.get_mut(leaf_hash).ok_or_else(|| CJError::not_found("ticket"))?;
-            if status {
-                entry.status = PendingStatus::Committed;
-                self.prev_leaf_hash = leaf_hash.to_string();
-                self.committed.insert(leaf_hash.to_string());
-                return self.persist_state();
-            } else if let Some(msg) = error_msg {
+            let entry = self
+                .pending
+                .get_mut(leaf_hash)
+                .ok_or_else(|| CJError::not_found("ticket"))?;
+            entry.retry_count += 1;
+            if let Some(msg) = error_msg {
                 entry.last_error = Some(msg.to_string());
-                timestamp = entry.timestamp;
-            } else {
-                return self.persist_state();
             }
-        }
-        if let Some(msg) = error_msg {
-            self.log_orphan_leaf(leaf_hash, msg, timestamp)?;
+            if entry.retry_count > self.max_retries {
+                entry.status = PendingStatus::FailedPermanent;
+            }
+            timestamp = entry.timestamp;
+            if let Some(msg) = error_msg {
+                self.log_orphan_leaf(leaf_hash, msg, timestamp)?;
+            }
         }
         self.persist_state()
     }
@@ -323,5 +333,47 @@ mod tests {
         let rc = ts.retry_next_pending(|_, _, _| 1).unwrap();
         assert_eq!(rc, -2);
         assert!(matches!(ts.pending.get(&ticket).unwrap().status, PendingStatus::FailedPermanent));
+    }
+
+    #[test]
+    fn test_confirm_ticket_success_side_effects() {
+        let mut ts = Turnstile::new("00".repeat(32), 1);
+        let ticket = ts.append("{\"a\":1}", 1).unwrap();
+        assert!(ts.pending.contains_key(&ticket));
+        ts.confirm_ticket(&ticket, true, None).unwrap();
+        // Expect removal from pending and moved to committed
+        assert!(!ts.pending.contains_key(&ticket));
+        assert!(ts.committed.contains(&ticket));
+        assert_eq!(ts.prev_leaf_hash, ticket);
+        assert_eq!(ts.pending_count(), 0);
+    }
+
+    #[test]
+    fn test_confirm_ticket_failure_records_orphan_and_retries() {
+        let mut ts = Turnstile::new("00".repeat(32), 0);
+        let ticket = ts.append("{\"x\":1}", 5).unwrap();
+        ts.confirm_ticket(&ticket, false, Some("err")).unwrap();
+        // retry count should increment and exceed max_retries causing permanent failure
+        let entry = ts.pending.get(&ticket).unwrap();
+        assert_eq!(entry.retry_count, 1);
+        assert!(matches!(entry.status, PendingStatus::FailedPermanent));
+        assert_eq!(entry.last_error.as_deref(), Some("err"));
+        // orphan event logged
+        assert_eq!(ts.orphans.len(), 1);
+        let orphan = &ts.orphans[0];
+        assert_eq!(orphan.orig_hash, ticket);
+        assert_eq!(orphan.error_msg, "err");
+        assert_eq!(orphan.timestamp, 5);
+        assert_eq!(ts.prev_leaf_hash, orphan.leaf_hash);
+    }
+
+    #[test]
+    fn test_confirm_ticket_not_found() {
+        let mut ts = Turnstile::new("00".repeat(32), 1);
+        let err = ts.confirm_ticket("ff".repeat(32).as_str(), true, None).unwrap_err();
+        match err {
+            CJError::NotFound(_) => {}
+            _ => panic!("expected NotFound error"),
+        }
     }
 }
