@@ -360,6 +360,17 @@ Ensure all components are functioning correctly:
 ```bash
 cargo test
 ```
+This runs all unit and integration tests, including the expanded memory
+storage suite located in `tests/memory_storage_tests.rs`. These tests now
+cover failure simulation, page and leaf lookups, existence checks and
+clearing logic, concurrency, targeted and level-wide failure simulation for
+the in-memory backend.
+Additional unit tests in `tests/basic_types_tests.rs` verify enum conversions
+for common types and constructors for core error helpers.
+Turnstile tests in `tests/turnstile_tests.rs` cover persistence, retry logic,
+orphan handling, and invalid input including corruption detection.
+Page behavior tests in `tests/page_behavior_tests.rs` validate net patch hashing
+order independence and the page finalization logic.
 
 For running tests that manipulate time for age-based rollup testing:
 

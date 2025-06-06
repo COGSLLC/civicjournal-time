@@ -71,3 +71,14 @@ fn test_orphan_logging_disabled() {
     assert_eq!(ts.orphan_events().len(), 0);
     assert_eq!(ts.latest_leaf_hash(), prev);
 }
+
+#[test]
+fn test_append_invalid_json_and_prev_hash() {
+    // invalid JSON should produce an error
+    let mut ts = Turnstile::new("00".repeat(32), 3);
+    assert!(ts.append("{" , 0).is_err());
+
+    // invalid previous hash also results in error
+    let mut ts = Turnstile::new("zz".into(), 3);
+    assert!(ts.append("{\"a\":1}", 0).is_err());
+}

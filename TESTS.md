@@ -149,6 +149,8 @@ tests/
     └── corpus/        # Test corpora
 ```
 
+Recent test files in the root `tests/` directory include `file_storage_tests.rs`, `time_manager_tests.rs`, `basic_types_tests.rs`, and the expanded `memory_storage_tests.rs` which verifies in-memory backend behavior. The memory storage tests now exercise leaf lookup, page deletion, clearing logic, concurrency checks, targeted and level-wide failure simulation in addition to page summaries. The basic types suite checks conversions for common enums and error helper constructors. The `turnstile_tests.rs` file validates persistence and retry logic along with invalid JSON and bad hash handling. A `page_behavior_tests.rs` file covers canonical hashing of net patches and page finalization rules.
+
 ### Test Modules
 
 Each test module should follow this structure:
