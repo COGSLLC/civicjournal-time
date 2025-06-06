@@ -324,4 +324,5 @@ async fn test_leaf_inclusion_proof_missing_leaf_data() {
 
     let result = engine.get_leaf_inclusion_proof(&leaf.leaf_hash).await;
     assert!(matches!(result, Err(civicjournal_time::query::types::QueryError::LeafDataNotFound(_))));
+
 }
