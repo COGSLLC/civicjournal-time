@@ -544,6 +544,8 @@ components:
   `load_leaf_by_hash` ignores files not prefixed with `page_`.
 - `tests/time_manager_*` – tests for the time hierarchy manager including
   rollup and retention behaviour.
+  A new boundary test verifies that leaves exactly on page window
+  boundaries create a fresh active page.
 - `tests/query_engine_tests.rs` – query engine tests such as delta reports and
   page chain integrity (including the missing-page scenario).
 - `tests/api_*` – synchronous and asynchronous API tests.

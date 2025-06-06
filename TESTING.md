@@ -39,7 +39,7 @@ Test Config::load(path) when the file exists with valid TOML: that fields are pa
 .
 Test apply_env_vars(): set an environment variable like CJ_LOGGING_LEVEL=debug, call apply_env_vars(), and verify config.logging.level is updated accordingly. Also test that invalid env values produce a ConfigError.
 Test validate(): create a Config with invalid values (e.g. negative durations or contradictory settings) and verify validate() returns an error (based on validation::validate_config).
-query::engine.rs (QueryEngine)
+<!--query::engine.rs (QueryEngine)
 get_leaf_inclusion_proof(leaf_hash):
 Set up a storage backend (e.g. in-memory) with known pages and leaves. Invoke get_leaf_inclusion_proof for an existing leaf hash; verify the returned LeafInclusionProof has the correct leaf, page_id, level, and a valid Merkle proof (you can recompute the Merkle root separately to check). Cite logic: it searches L0 pages and constructs a MerkleTree
  
@@ -69,12 +69,12 @@ Create a series of pages at a level with known prev_page_hash chain, and modify 
  
 .
 Test the InvalidParameters case: e.g. from=5, to=3 should return an Err(QueryError::InvalidParameters)
- 
+--> 
 .
 <!-- Test pages missing from storage: include a summary with a page_id that has no stored file, and verify the report for that page has is_valid=false with issue “page missing” -->
  
 .
-api::sync_api.rs
+<!--api::sync_api.rs
 Test Journal::new(config): uses create_storage_backend and TimeHierarchyManager::new. The existing test verifies it returns Ok
  
 . Also test that if create_storage_backend fails (e.g. invalid file path for FileStorage), it returns an Err(CJError).
@@ -103,7 +103,7 @@ Rollup trigger: configure a tiny max_items_per_page and append enough leaves to 
 get_page(level, page_id): test non-existent page returns Err(CJError::PageNotFound)
  
  (already covered). Test success for an existing page.
-Async query methods (get_leaf_inclusion_proof, reconstruct_container_state, get_delta_report, get_page_chain_integrity): these simply await the QueryEngine methods. Write async tests that set up known data (via previous append_leaf calls) and verify these methods return correct results or errors, paralleling the QueryEngine unit tests above.
+Async query methods (get_leaf_inclusion_proof, reconstruct_container_state, get_delta_report, get_page_chain_integrity): these simply await the QueryEngine methods. Write async tests that set up known data (via previous append_leaf calls) and verify these methods return correct results or errors, paralleling the QueryEngine unit tests above.-->
 storage::memory.rs (MemoryStorage)
 Test new(): it should start empty (is_empty()==true)
  
@@ -165,12 +165,12 @@ Test that it skips files with wrong magic or extension (code uses MAGIC_STRING a
 load_leaf_by_hash: similar to MemoryStorage: for L0 pages with leaves, verify each leaf’s hash is found
 -->
  
-. If no L0 dir exists, it should return Ok(None)
+<!--. If no L0 dir exists, it should return Ok(None)-->
 
 <!-- Verify skipping of non-page_ files (code checks file name prefix) -->
  
 .
-backup_journal(backup_path):
+<!--backup_journal(backup_path):
 Empty journal: if the journal subdirectory is absent, calling backup_journal should create an empty zip containing only a manifest with no files
  
 . Test that an empty zip is created and that the manifest inside has files: [].
@@ -179,8 +179,8 @@ restore_journal(backup_path, target_dir):
 Test error if backup_path does not exist: it should return Err(CJError::StorageError)
  
 .
-For a valid backup zip created above, call restore_journal to a new directory. Then verify that the restored target_dir/journal/level_X/page_Y.cjt files exist and match the originals. Verify metadata (file permissions, etc) are preserved as coded.
-turnstile::mod.rs (Turnstile Manager)
+For a valid backup zip created above, call restore_journal to a new directory. Then verify that the restored target_dir/journal/level_X/page_Y.cjt files exist and match the originals. Verify metadata (file permissions, etc) are preserved as coded.-->
+<!--turnstile::mod.rs (Turnstile Manager)
 append(&mut self, payload_json, timestamp): test that appending valid JSON produces a ticket (hex hash) and adds a pending entry. The existing test computes a specific hash for {"foo":"bar"}
  
 . Also test that pending_count() increments and list_pending() returns the ticket.
@@ -203,7 +203,7 @@ Case 3: callback returns failure (!=1): increment retry_count. If retry_count < 
 Verify that if no pending entries exist, retry_next_pending returns Ok(-1).
 Other methods:
 leaf_exists(leaf_hash): test that it returns true if the hash is in pending or committed, otherwise false.
-list_pending(max): test it returns up to max hashes of status Pending.
+list_pending(max): test it returns up to max hashes of status Pending.-->
 2. Integration Tests
 TimeHierarchy + Storage Integration: use a shared test config with MemoryStorage or a temp FileStorage to simulate actual journal usage:
 Append a series of leaves (via async API or directly via TimeHierarchyManager) and then use the query engine (Journal::get_delta_report, etc.) to fetch reports. Verify consistency of data across components.
@@ -226,7 +226,7 @@ Passing a non-JSON or malformed JSON string to Turnstile::append or compute_hash
 . Test these by writing custom invalid files. -->
 Boundary Conditions:
 Test pages with zero leaves (empty pages) and maximum allowed leaves (if any).
-Time edges: leaves with timestamps exactly on roll-up boundaries.
+<!-- Time edges: leaves with timestamps exactly on roll-up boundaries. -->
 4. API (Endpoint) Tests
 (No HTTP endpoints are defined in this library.) The “API” here refers to the Rust synchronous/asynchronous interfaces described above. Their key behaviors are covered in unit/integration tests. If a future version exposes REST or CLI commands, those would require corresponding tests.
 5. Third-Party Dependencies
