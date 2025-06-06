@@ -6,7 +6,7 @@ use civicjournal_time::core::page::{JournalPage, PageContent, PageIdGenerator};
 use civicjournal_time::types::time::{RollupContentType, RollupRetentionPolicy};
 use civicjournal_time::config::{Config, TimeHierarchyConfig, TimeLevel, LevelRollupConfig, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
 use civicjournal_time::StorageType;
-use chrono::{Utc, Duration, DateTime};
+use chrono::{Utc, Duration, DateTime, TimeZone};
 use serde_json::json;
 use std::sync::Arc;
 use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
@@ -94,6 +94,42 @@ async fn test_page_assignment_new_page_when_full() {
     assert!(new_id > 0);
     assert_eq!(manager.active_pages.lock().await.get(&0).unwrap().content_len(), 1);
     assert!(storage.load_page(0, new_id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_new_page_on_time_boundary() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    // Allow multiple leaves per page so boundary alone triggers a new page
+    let config = Arc::new(build_single_level_config(10, None, false, 0));
+    let storage = Arc::new(MemoryStorage::new());
+    let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
+
+    // Choose a fixed base time not aligned to a minute boundary
+    let base = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 59).unwrap();
+    let leaf1 = JournalLeaf::new(base, None, "c".into(), json!({"id": 1})).unwrap();
+    manager.add_leaf(&leaf1, leaf1.timestamp).await.unwrap();
+
+    let leaf2_ts = base + Duration::seconds(1); // exactly at 00:01:00 boundary
+    let leaf2 = JournalLeaf::new(leaf2_ts, None, "c".into(), json!({"id": 2})).unwrap();
+    manager.add_leaf(&leaf2, leaf2.timestamp).await.unwrap();
+
+    // First page should be finalized and stored with only leaf1
+    let page0 = storage.load_page(0, 0).await.unwrap().unwrap();
+    assert_eq!(page0.content_len(), 1);
+    match &page0.content {
+        PageContent::Leaves(v) => assert_eq!(v[0].leaf_hash, leaf1.leaf_hash),
+        _ => panic!("expected leaves"),
+    }
+
+    // Second leaf should be in a new active page
+    assert_eq!(manager.get_current_active_page_id(0).await.unwrap(), 1);
+    let active = manager.active_pages.lock().await.get(&0).unwrap().clone();
+    assert_eq!(active.content_len(), 1);
+    match &active.content {
+        PageContent::Leaves(v) => assert_eq!(v[0].leaf_hash, leaf2.leaf_hash),
+        _ => panic!("expected leaves"),
+    }
 }
 
 #[tokio::test]

@@ -311,3 +311,81 @@ async fn test_leaf_inclusion_proof_missing_leaf_data() {
     let result = engine.get_leaf_inclusion_proof(&leaf.leaf_hash).await;
     assert!(matches!(result, Err(civicjournal_time::query::types::QueryError::LeafDataNotFound(_))));
 }
+#[derive(Debug, Clone)]
+struct MissingPageStorage {
+    inner: Arc<MemoryStorage>,
+    missing_id: u64,
+}
+
+#[async_trait::async_trait]
+impl StorageBackend for MissingPageStorage {
+    async fn store_page(&self, page: &JournalPage) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.store_page(page).await
+    }
+
+    async fn load_page(&self, level: u8, page_id: u64) -> Result<Option<JournalPage>, civicjournal_time::error::CJError> {
+        if page_id == self.missing_id {
+            Ok(None)
+        } else {
+            self.inner.load_page(level, page_id).await
+        }
+    }
+
+    async fn page_exists(&self, level: u8, page_id: u64) -> Result<bool, civicjournal_time::error::CJError> {
+        self.inner.page_exists(level, page_id).await
+    }
+
+    async fn delete_page(&self, level: u8, page_id: u64) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.delete_page(level, page_id).await
+    }
+
+    async fn list_finalized_pages_summary(&self, level: u8) -> Result<Vec<civicjournal_time::core::page::JournalPageSummary>, civicjournal_time::error::CJError> {
+        self.inner.list_finalized_pages_summary(level).await
+    }
+
+    async fn backup_journal(&self, backup_path: &std::path::Path) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.backup_journal(backup_path).await
+    }
+
+    async fn restore_journal(&self, backup_path: &std::path::Path, target_journal_dir: &std::path::Path) -> Result<(), civicjournal_time::error::CJError> {
+        self.inner.restore_journal(backup_path, target_journal_dir).await
+    }
+
+    async fn load_page_by_hash(&self, page_hash: [u8; 32]) -> Result<Option<JournalPage>, civicjournal_time::error::CJError> {
+        self.inner.load_page_by_hash(page_hash).await
+    }
+
+    async fn load_leaf_by_hash(&self, leaf_hash: &[u8; 32]) -> Result<Option<JournalLeaf>, civicjournal_time::error::CJError> {
+        self.inner.load_leaf_by_hash(leaf_hash).await
+    }
+}
+
+#[tokio::test]
+async fn test_page_chain_integrity_missing_page() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let config = Arc::new(Config::default());
+    let base_storage = Arc::new(MemoryStorage::new());
+
+    let t0 = Utc::now();
+    let mut page1 = JournalPage::new(0, None, t0, &config);
+    page1.recalculate_merkle_root_and_page_hash();
+    base_storage.store_page(&page1).await.unwrap();
+
+    let mut page2 = JournalPage::new(0, Some(page1.page_hash), t0 + Duration::seconds(1), &config);
+    page2.recalculate_merkle_root_and_page_hash();
+    base_storage.store_page(&page2).await.unwrap();
+
+    let missing_storage = Arc::new(MissingPageStorage { inner: base_storage.clone(), missing_id: page2.page_id });
+    let tm = Arc::new(TimeHierarchyManager::new(config.clone(), missing_storage.clone()));
+    let engine = QueryEngine::new(missing_storage.clone(), tm, config.clone());
+
+    let reports = engine
+        .get_page_chain_integrity(0, Some(page1.page_id), Some(page2.page_id))
+        .await
+        .unwrap();
+    assert_eq!(reports.len(), 2);
+    assert!(reports[0].is_valid);
+    assert!(!reports[1].is_valid);
+    assert!(reports[1].issues.iter().any(|i| i.contains("page missing")));
+}

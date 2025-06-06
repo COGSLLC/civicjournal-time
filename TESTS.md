@@ -522,6 +522,38 @@ Ensure your CI pipeline includes:
 6. Security audit (cargo-audit)
 7. Coverage reporting
 
+## Implemented Tests
+
+The repository includes a comprehensive suite of tests covering all major
+components:
+
+- `src/core/leaf.rs` – unit tests for `JournalLeaf` creation, ID management and
+  `LeafData` serialization.
+- `src/core/page.rs` – unit tests validating page hashing logic and
+  serialization round trips.
+- `src/core/merkle.rs` – exhaustive tests of `MerkleTree` construction and
+  proof generation.
+- `src/config/tests/config_mod_tests.rs` – configuration loading,
+  environment overrides and validation.
+- `tests/hash_tests.rs` – hashing helper functions.
+- `tests/memory_storage_*` – unit tests for the in‑memory storage backend.
+- `tests/file_storage_*` – unit and integration tests for the file storage
+  backend, including an error test for permission-denied writes, a check
+  that `load_page_by_hash` skips invalid files, validation that loading
+  a page fails when the file header is too short, and a test verifying
+  `load_leaf_by_hash` ignores files not prefixed with `page_`.
+- `tests/time_manager_*` – tests for the time hierarchy manager including
+  rollup and retention behaviour.
+  A new boundary test verifies that leaves exactly on page window
+  boundaries create a fresh active page.
+- `tests/query_engine_tests.rs` – query engine tests such as delta reports and
+  page chain integrity (including the missing-page scenario).
+- `tests/api_*` – synchronous and asynchronous API tests.
+- `tests/turnstile_*` – tests for the turnstile queuing system.
+- `tests/integration/full_workflow.rs` – full workflow integration test.
+
+These tests can be run with `cargo test` and are executed automatically in CI.
+
 ## Test Maintenance
 
 - Regularly review and update tests
