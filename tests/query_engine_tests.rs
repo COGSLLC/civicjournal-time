@@ -163,3 +163,4 @@ async fn test_page_chain_integrity_detects_mismatch() {
     assert!(reports[1].issues.iter().any(|i| i.contains("prev_page_hash")));
     assert!(!reports[1].is_valid);
 }
+
