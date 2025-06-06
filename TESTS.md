@@ -529,8 +529,10 @@ components:
 
 - `src/core/leaf.rs` – unit tests for `JournalLeaf` creation, ID management and
   `LeafData` serialization.
-- `src/core/page.rs` – unit tests validating page hashing logic and
-  serialization round trips.
+ - `src/core/page.rs` – unit tests validating page hashing logic and
+   serialization round trips. A boundary test confirms `is_content_empty`
+   transitions correctly when leaves are added.
+
 - `src/core/merkle.rs` – exhaustive tests of `MerkleTree` construction and
   proof generation.
 - `src/config/tests/config_mod_tests.rs` – configuration loading,
@@ -541,7 +543,15 @@ components:
   backend, including an error test for permission-denied writes, a check
   that `load_page_by_hash` skips invalid files, validation that loading
   a page fails when the file header is too short, and a test verifying
-  `load_leaf_by_hash` ignores files not prefixed with `page_`.
+  `load_leaf_by_hash` ignores files not prefixed with `page_` and does not
+  treat thrall hashes in higher-level pages as leaves. An
+  additional edge-case test stores and loads a large page under each
+  compression algorithm to ensure stability.
+  Another test confirms that listing finalized pages for a level with no
+  directory returns an empty list.
+  A new check verifies that `page_exists` returns false before storing a page
+  and true afterward.
+
 - `tests/time_manager_*` – tests for the time hierarchy manager including
   rollup and retention behaviour.
   A new boundary test verifies that leaves exactly on page window
@@ -551,6 +561,9 @@ components:
 - `tests/api_*` – synchronous and asynchronous API tests.
 - `tests/turnstile_*` – tests for the turnstile queuing system.
 - `tests/integration/full_workflow.rs` – full workflow integration test.
+- `tests/integration/rollup_file_integration.rs` – verifies roll-up across
+  levels using the file storage backend and ensures the query API sees all
+  appended leaves.
 
 These tests can be run with `cargo test` and are executed automatically in CI.
 

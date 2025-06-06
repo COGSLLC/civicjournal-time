@@ -75,7 +75,7 @@ async fn test_page_assignment_new_page_when_full() {
     let storage = Arc::new(MemoryStorage::new());
     let manager = TimeHierarchyManager::new(config.clone(), storage.clone());
 
-    let base = Utc::now();
+    let base = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 30).unwrap();
     let leaf1 = JournalLeaf::new(base, None, "c".into(), json!({"id":1})).unwrap();
     manager.add_leaf(&leaf1, leaf1.timestamp).await.unwrap();
     assert_eq!(manager.get_current_active_page_id(0).await, Some(0));

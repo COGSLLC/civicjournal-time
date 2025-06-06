@@ -623,4 +623,21 @@ mod tests {
         assert_eq!(summaries[0].page_id, page.page_id);
         assert_eq!(summaries[0].page_hash, page.page_hash);
     }
+
+    #[tokio::test]
+    async fn test_is_content_empty_transitions() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+        let cfg = get_test_config();
+        let now = Utc::now();
+
+        let mut page = JournalPage::new(0, None, now, &cfg);
+        assert!(page.is_content_empty());
+        assert_eq!(page.content_len(), 0);
+
+        let leaf = create_dummy_leaf(now + Duration::milliseconds(1), &[1u8; 32], "empty");
+        page.add_leaf(leaf);
+        assert!(!page.is_content_empty());
+        assert_eq!(page.content_len(), 1);
+    }
 }

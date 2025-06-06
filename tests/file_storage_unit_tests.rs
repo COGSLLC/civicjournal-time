@@ -134,6 +134,18 @@ async fn test_list_finalized_pages_summary() {
 }
 
 #[tokio::test]
+async fn test_list_finalized_pages_summary_empty_dir() {
+    reset_global_ids();
+    let dir = tempdir().unwrap();
+    let cfg = cfg(CompressionAlgorithm::None, false);
+    let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
+
+    let summaries = storage.list_finalized_pages_summary(0).await.unwrap();
+    assert!(summaries.is_empty());
+    assert!(!dir.path().join("journal/level_0").exists());
+}
+
+#[tokio::test]
 async fn test_load_page_by_hash() {
     reset_global_ids();
     let dir = tempdir().unwrap();
@@ -183,6 +195,37 @@ async fn test_load_leaf_by_hash_skips_non_page_files() {
 }
 
 #[tokio::test]
+async fn test_load_leaf_by_hash_ignores_l1_pages() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let dir = tempdir().unwrap();
+    let cfg = cfg(CompressionAlgorithm::None, false);
+    let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
+
+    // Store an L0 page with a real leaf
+    let page0 = make_page(0, &cfg);
+    let leaf_hash = match &page0.content { PageContent::Leaves(v) => v[0].leaf_hash, _ => [0u8;32] };
+    storage.store_page(&page0).await.unwrap();
+
+    // Store an L1 page containing only a thrall hash
+    let mut page1 = JournalPage::new(1, None, Utc::now(), &cfg);
+    if let PageContent::ThrallHashes(ref mut v) = page1.content {
+        v.push(page0.page_hash);
+    }
+    page1.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page1).await.unwrap();
+
+    // Leaf in L0 should be found
+    let found = storage.load_leaf_by_hash(&leaf_hash).await.unwrap();
+    assert!(found.is_some());
+
+    // Thrall hash from L1 should not be treated as a leaf
+    let none = storage.load_leaf_by_hash(&page0.page_hash).await.unwrap();
+    assert!(none.is_none());
+}
+
+#[tokio::test]
+
 async fn test_backup_empty_and_restore() {
     reset_global_ids();
     let dir = tempdir().unwrap();
