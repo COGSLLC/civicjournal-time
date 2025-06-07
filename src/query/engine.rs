@@ -67,15 +67,34 @@ impl QueryEngine {
     /// # Note
     /// The current implementation searches through level 0 pages. Future
     /// versions may support more efficient lookups using hints or indexing.
-    pub async fn get_leaf_inclusion_proof(
+pub async fn get_leaf_inclusion_proof_with_hint(
         &self,
         leaf_hash: &[u8; 32],
-        // TODO: Implement page_id_hint for more efficient lookups
-        // page_id_hint: Option<(u8, u64)>,
+        page_id_hint: Option<(u8, u64)>,
     ) -> Result<LeafInclusionProof, QueryError> {
-        // TODO: Implement more efficient page searching, possibly with a timestamp hint
-        // or by querying TimeHierarchyManager for pages within a relevant time range if known.
-        // For now, we iterate through known level 0 pages.
+        // If a hint is provided, check that page first before scanning.
+        if let Some((hint_level, hint_page)) = page_id_hint {
+            if let Ok(Some(page)) = self.storage.load_page(hint_level, hint_page).await {
+                if let crate::core::page::PageContent::Leaves(leaves) = &page.content {
+                    if let Some(idx) = leaves.iter().position(|l| l.leaf_hash == *leaf_hash) {
+                        let merkle_tree = crate::core::merkle::MerkleTree::new(
+                            leaves.iter().map(|l| l.leaf_hash).collect(),
+                        ).map_err(QueryError::CoreError)?;
+                        if let Some(proof) = merkle_tree.get_proof(idx) {
+                            return Ok(LeafInclusionProof {
+                                leaf: leaves[idx].clone(),
+                                page_id: page.page_id,
+                                level: page.level,
+                                proof,
+                                page_merkle_root: page.merkle_root,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: iterate through known level 0 pages.
 
         let mut level0_page_ids_to_check: Vec<u64> = Vec::new();
 
@@ -165,6 +184,16 @@ impl QueryEngine {
         }
 
         Err(QueryError::LeafNotFound(*leaf_hash))
+    }
+
+    /// Convenience wrapper that calls [`get_leaf_inclusion_proof_with_hint`] without a hint.
+    pub async fn get_leaf_inclusion_proof(
+        &self,
+        leaf_hash: &[u8; 32],
+    ) -> Result<LeafInclusionProof, QueryError> {
+        self
+            .get_leaf_inclusion_proof_with_hint(leaf_hash, None)
+            .await
     }
 
     fn apply_delta(state: &mut Value, delta: &Value) {
@@ -259,6 +288,92 @@ impl QueryEngine {
         }
         deltas.sort_by_key(|l| l.timestamp);
         Ok(DeltaReport { container_id: container_id.to_string(), from_point: QueryPoint::Timestamp(from), to_point: QueryPoint::Timestamp(to), deltas })
+    }
+
+    /// Retrieves a portion of the delta report between two timestamps.
+    ///
+    /// `offset` specifies how many matching deltas to skip before collecting
+    /// results, and `limit` controls the maximum number of deltas returned.
+    pub async fn get_delta_report_paginated(
+        &self,
+        container_id: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<DeltaReport, QueryError> {
+        if from > to {
+            return Err(QueryError::InvalidParameters("from is after to".into()));
+        }
+        if limit == 0 {
+            return Ok(DeltaReport {
+                container_id: container_id.to_string(),
+                from_point: QueryPoint::Timestamp(from),
+                to_point: QueryPoint::Timestamp(to),
+                deltas: Vec::new(),
+            });
+        }
+
+        let mut pages = self.storage.list_finalized_pages_summary(0).await?;
+        if let Some(active) = self.time_manager.get_current_active_page_id(0).await {
+            if let Ok(Some(p)) = self.storage.load_page(0, active).await {
+                pages.push(crate::core::page::JournalPageSummary {
+                    page_id: p.page_id,
+                    level: p.level,
+                    creation_timestamp: p.creation_timestamp,
+                    end_time: p.end_time,
+                    page_hash: p.page_hash,
+                });
+            }
+        }
+        pages.sort_by_key(|p| p.creation_timestamp);
+
+        let mut deltas = Vec::new();
+        let mut seen_any = false;
+        let mut skipped = 0usize;
+        for summary in pages {
+            if summary.end_time < from || summary.creation_timestamp > to {
+                continue;
+            }
+            if let Ok(Some(page)) = self.storage.load_page(summary.level, summary.page_id).await {
+                if let crate::core::page::PageContent::Leaves(leaves) = page.content {
+                    for leaf in leaves {
+                        if leaf.timestamp < from {
+                            continue;
+                        }
+                        if leaf.timestamp > to {
+                            break;
+                        }
+                        if leaf.container_id == container_id {
+                            seen_any = true;
+                            if skipped < offset {
+                                skipped += 1;
+                                continue;
+                            }
+                            if deltas.len() < limit {
+                                deltas.push(leaf);
+                                if deltas.len() == limit {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if deltas.len() == limit {
+                break;
+            }
+        }
+        if !seen_any {
+            return Err(QueryError::ContainerNotFound(container_id.to_string()));
+        }
+        deltas.sort_by_key(|l| l.timestamp);
+        Ok(DeltaReport {
+            container_id: container_id.to_string(),
+            from_point: QueryPoint::Timestamp(from),
+            to_point: QueryPoint::Timestamp(to),
+            deltas,
+        })
     }
 
     pub async fn get_page_chain_integrity(

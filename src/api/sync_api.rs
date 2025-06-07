@@ -71,12 +71,37 @@ impl Journal {
         self.rt.block_on(self.query.get_leaf_inclusion_proof(leaf_hash)).map_err(Into::into)
     }
 
+    pub fn get_leaf_inclusion_proof_with_hint(
+        &self,
+        leaf_hash: &[u8; 32],
+        page_id_hint: Option<(u8, u64)>,
+    ) -> CJResult<crate::query::types::LeafInclusionProof> {
+        self
+            .rt
+            .block_on(self.query.get_leaf_inclusion_proof_with_hint(leaf_hash, page_id_hint))
+            .map_err(Into::into)
+    }
+
     pub fn reconstruct_container_state(&self, container_id: &str, at: DateTime<Utc>) -> CJResult<crate::query::types::ReconstructedState> {
         self.rt.block_on(self.query.reconstruct_container_state(container_id, at)).map_err(Into::into)
     }
 
     pub fn get_delta_report(&self, container_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> CJResult<crate::query::types::DeltaReport> {
         self.rt.block_on(self.query.get_delta_report(container_id, from, to)).map_err(Into::into)
+    }
+
+    pub fn get_delta_report_paginated(
+        &self,
+        container_id: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        offset: usize,
+        limit: usize,
+    ) -> CJResult<crate::query::types::DeltaReport> {
+        self
+            .rt
+            .block_on(self.query.get_delta_report_paginated(container_id, from, to, offset, limit))
+            .map_err(Into::into)
     }
 
     pub fn get_page_chain_integrity(&self, level: u8, from: Option<u64>, to: Option<u64>) -> CJResult<Vec<crate::query::types::PageIntegrityReport>> {
