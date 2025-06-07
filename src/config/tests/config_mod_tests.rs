@@ -1,6 +1,7 @@
 use super::*;
 use tempfile::tempdir;
 use std::fs;
+use std::path::Path;
 
 #[test]
 fn test_config_default_values() {
@@ -67,5 +68,15 @@ fn test_validate_invalid_config() {
     let mut cfg = Config::default();
     cfg.time_hierarchy.levels[0].rollup_config.max_items_per_page = 0;
     assert!(cfg.validate().is_err());
+}
+
+#[test]
+fn test_config_dir_returns_valid_path() {
+    if let Some(path) = Config::config_dir() {
+        // Path should end with the application directory name
+        assert!(Path::new(&path).ends_with("civicjournal-time"));
+    } else {
+        panic!("config_dir returned None");
+    }
 }
 

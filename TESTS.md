@@ -524,11 +524,12 @@ Ensure your CI pipeline includes:
 
 ## Implemented Tests
 
+All tests outlined in TESTING.md have been implemented.
 The repository includes a comprehensive suite of tests covering all major
 components:
 
-- `src/core/leaf.rs` – unit tests for `JournalLeaf` creation, ID management and
-  `LeafData` serialization.
+- `src/core/leaf.rs` – unit tests for `JournalLeaf` creation, ID management,
+  invalid payload handling, and `LeafData` serialization.
  - `src/core/page.rs` – unit tests validating page hashing logic and
    serialization round trips. A boundary test confirms `is_content_empty`
    transitions correctly when leaves are added.
@@ -536,7 +537,8 @@ components:
 - `src/core/merkle.rs` – exhaustive tests of `MerkleTree` construction and
   proof generation.
 - `src/config/tests/config_mod_tests.rs` – configuration loading,
-  environment overrides and validation.
+  environment overrides, validation, and a check that `Config::config_dir()`
+  returns a path ending with `civicjournal-time`.
 - `tests/hash_tests.rs` – hashing helper functions.
 - `tests/memory_storage_*` – unit tests for the in‑memory storage backend.
 - `tests/file_storage_*` – unit and integration tests for the file storage
