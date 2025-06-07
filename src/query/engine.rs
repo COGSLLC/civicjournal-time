@@ -144,6 +144,20 @@ pub async fn get_leaf_inclusion_proof_with_hint(
                             // NetPatches content (Vec<u8>) doesn't directly provide leaf hashes for Merkle proof of a *JournalLeaf*.
                             // found_leaf_in_page_contents will remain false, so this page won't be considered to contain the target leaf.
                         }
+                        crate::core::page::PageContent::Snapshot(_snapshot_payload) => {
+                            // Snapshots do not directly contain individual JournalLeafs in the same way L0 pages do.
+                            // A snapshot represents a full state at a point in time.
+                            // If we encounter a snapshot page while searching for a specific leaf proof,
+                            // it means the leaf is not in this specific page in a granular form.
+                            // found_leaf_in_page_contents will remain false.
+                            eprintln!(
+                                "[QueryEngine] Info: Encountered PageContent::Snapshot in page (ID: {}) during find_leaf_proof. This is not where individual leaves are proven from.",
+                                page.page_id
+                            );
+                            // For Merkle proof purposes of *this snapshot page itself*, one might use
+                            // snapshot_payload.container_states_merkle_root or other hashes from its header,
+                            // but that's not relevant to proving a *JournalLeaf* that isn't part of this snapshot's direct content type.
+                        }
                     }
 
                     if found_leaf_in_page_contents {

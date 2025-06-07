@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use crate::config::Config;
 use crate::storage::StorageBackend;
 use crate::core::leaf::JournalLeaf;
+use log;
 use crate::core::page::{JournalPage, PageContent, PageIdGenerator};
 use crate::error::CJError;
 use crate::types::{RollupContentType, RollupRetentionPolicy};
@@ -112,6 +113,44 @@ impl TimeHierarchyManager {
             active_pages: Arc::new(Mutex::new(HashMap::new())),
             last_finalized_page_ids: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             last_finalized_page_hashes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Retrieves a clone of active L0 journal leaves up to a specified timestamp.
+    ///
+    /// This method is designed to provide a consistent view of L0 leaves for operations
+    /// like snapshot creation, without holding a long lock. It locks the active pages map,
+    /// filters leaves from the L0 page by the given timestamp, clones them, and then releases the lock.
+    ///
+    /// # Arguments
+    /// * `as_of_timestamp` - The timestamp up to which leaves should be included.
+    ///
+    /// # Returns
+    /// A `Result` containing a vector of cloned `JournalLeaf` instances, or a `CJError`
+    /// if the L0 page is not found or its content is not `PageContent::Leaves` (which would be unexpected).
+    /// Returns an empty vector if no L0 page is active or no leaves meet the criteria.
+    pub async fn get_active_l0_leaves_up_to(&self, as_of_timestamp: DateTime<Utc>) -> Result<Vec<JournalLeaf>, CJError> {
+        let active_pages_guard = self.active_pages.lock().await;
+        if let Some(l0_page) = active_pages_guard.get(&0) {
+            match &l0_page.content {
+                PageContent::Leaves(leaves) => {
+                    let relevant_leaves = leaves
+                        .iter()
+                        .filter(|leaf| leaf.timestamp <= as_of_timestamp)
+                        .cloned()
+                        .collect();
+                    Ok(relevant_leaves)
+                }
+                _ => {
+                    // This case should ideally not happen for an active L0 page if it has content.
+                    // If it's an empty L0 page or unexpected content type, returning empty is safe.
+                    log::warn!("Active L0 page (ID: {}) found, but content is not PageContent::Leaves. Snapshot may miss active L0 leaves.", l0_page.page_id);
+                    Ok(Vec::new())
+                }
+            }
+        } else {
+            // No active L0 page, so no leaves to return from it.
+            Ok(Vec::new())
         }
     }
 
@@ -679,6 +718,12 @@ Ok(original_page_id)
                     eprintln!("Error: Cannot roll up PageContent::ThrallHashes into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
                     // Potentially return an error or skip adding content.
 
+                }
+                PageContent::Snapshot(_) => {
+                    // Rolling up a Snapshot page into a NetPatches parent page is currently unsupported.
+                    // Snapshots represent a full state and are not typically rolled up as deltas.
+                    eprintln!("[Rollup] Error: Cannot roll up PageContent::Snapshot into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
+                    // Consider this an error or skip adding content.
                 }
             }
         }

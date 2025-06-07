@@ -91,6 +91,9 @@ pub struct Config {
     /// Retention policy configuration
     pub retention: RetentionConfig,
 
+    /// Snapshot system configuration
+    pub snapshot: SnapshotConfig,
+
     /// Whether to force roll-up operations on system shutdown.
     pub force_rollup_on_shutdown: bool,
 }
@@ -204,6 +207,81 @@ impl Default for RetentionConfig {
     }
 }
 
+/// Configuration for snapshot retention policies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotRetentionConfig {
+    /// Whether snapshot retention policies are active.
+    pub enabled: bool,
+    /// Maximum number of snapshots to retain. Oldest snapshots beyond this count will be candidates for pruning.
+    /// `None` means no limit by count.
+    pub max_count: Option<u32>,
+    /// Maximum age of a snapshot in seconds. Snapshots older than this will be candidates for pruning.
+    /// `None` means no limit by age.
+    pub max_age_seconds: Option<u64>,
+}
+
+impl Default for SnapshotRetentionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_count: None,
+            max_age_seconds: None,
+        }
+    }
+}
+
+/// Configuration for automatic snapshot creation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotAutomaticCreationConfig {
+    /// Whether automatic snapshot creation is enabled.
+    pub enabled: bool,
+    /// Cron-style schedule string for periodic snapshot creation (e.g., "0 0 * * * *" for daily at midnight).
+    /// If set, this takes precedence over `interval_seconds`.
+    pub cron_schedule: Option<String>,
+    /// Interval in seconds for periodic snapshot creation.
+    /// Used if `cron_schedule` is not set. `None` or 0 means no interval-based creation.
+    pub interval_seconds: Option<u64>,
+}
+
+impl Default for SnapshotAutomaticCreationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cron_schedule: None,
+            interval_seconds: None,
+        }
+    }
+}
+
+/// Configuration for the snapshot system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotConfig {
+    /// Globally enable or disable the snapshot feature.
+    pub enabled: bool,
+    /// The dedicated hierarchical level for storing snapshot pages.
+    /// This level should be distinct from regular journal and rollup levels.
+    /// Typically, a high value like 250-255 is used.
+    pub dedicated_level: u8,
+    /// Configuration for snapshot retention policies.
+    pub retention: SnapshotRetentionConfig,
+    /// Configuration for automatic snapshot creation.
+    pub automatic_creation: SnapshotAutomaticCreationConfig,
+}
+
+impl Default for SnapshotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            dedicated_level: 250, // Default dedicated level for snapshots
+            retention: SnapshotRetentionConfig::default(),
+            automatic_creation: SnapshotAutomaticCreationConfig::default(),
+        }
+    }
+}
+
 impl Default for Config {
     /// Creates a default configuration with sensible defaults.
     ///
@@ -224,6 +302,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            snapshot: SnapshotConfig::default(),
             force_rollup_on_shutdown: true,
         }
     }

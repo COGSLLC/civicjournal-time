@@ -100,3 +100,41 @@ period_seconds = 0
 # How often to run the cleanup process (in seconds)
 # More frequent cleanups use more resources but provide more consistent performance
 cleanup_interval_seconds = 3600  # 1 hour
+
+[snapshot]
+# Globally enable or disable the snapshot feature.
+# Snapshots provide a full system state capture at a point in time.
+# They reside on a dedicated snapshot level and can be used for faster
+# state reconstruction and enabling archival of older granular data.
+enabled = false
+
+# Configuration for snapshot retention policies.
+[snapshot.retention]
+# Whether snapshot retention policies are active.
+# If false, snapshots are kept indefinitely unless manually pruned.
+enabled = false
+
+# Maximum number of snapshots to retain.
+# Oldest snapshots beyond this count will be candidates for pruning.
+# Set to 0 or leave unset for no limit by count.
+# max_count = 10
+
+# Maximum age of a snapshot in seconds.
+# Snapshots older than this will be candidates for pruning.
+# Set to 0 or leave unset for no limit by age.
+# max_age_seconds = 2592000 # e.g., 30 days
+
+# Configuration for automatic snapshot creation.
+[snapshot.automatic_creation]
+# Whether automatic snapshot creation is enabled.
+enabled = false
+
+# Cron-style schedule string for periodic snapshot creation.
+# Example: "0 0 3 * * *" for daily at 3 AM UTC.
+# If set, this takes precedence over interval_seconds.
+# cron_schedule = "0 0 3 * * *"
+
+# Interval in seconds for periodic snapshot creation.
+# Used if cron_schedule is not set.
+# Set to 0 or leave unset for no interval-based creation.
+# interval_seconds = 86400 # e.g., every 24 hours

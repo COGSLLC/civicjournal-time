@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::core::merkle::MerkleTree;
 use crate::core::leaf::JournalLeaf;
+use crate::core::snapshot::SnapshotPagePayload;
 use crate::config::Config; // Added for calculating end_time
 use crate::types::time::RollupContentType;
 
@@ -80,6 +81,10 @@ pub enum PageContent {
     /// Used when RollupContentType::NetPatches is specified.
     /// Structured as ObjectID -> FieldName -> NewValue
     NetPatches(HashMap<String, HashMap<String, serde_json::Value>>),
+
+    /// Contains a full system snapshot payload.
+    /// This variant is used for pages on the dedicated Snapshot Level.
+    Snapshot(SnapshotPagePayload),
 }
 
 
@@ -342,6 +347,17 @@ impl JournalPage {
                     net_patch_tuples_hashes
                 }
             }
+            PageContent::Snapshot(ref snapshot_payload) => {
+                // The snapshot_payload.container_states_merkle_root is the Merkle root
+                // of all container states within this snapshot. This pre-calculated root
+                // acts as the single "leaf" for this page's Merkle tree if there are states.
+                if !snapshot_payload.container_states.is_empty() {
+                    vec![snapshot_payload.container_states_merkle_root]
+                } else {
+                    // If there are no container states, there's nothing to include in the Merkle tree.
+                    Vec::new()
+                }
+            }
         };
 
         self.merkle_root = if actual_leaf_hashes.is_empty() {
@@ -383,6 +399,7 @@ impl JournalPage {
             PageContent::Leaves(leaves) => leaves.len(),
             PageContent::ThrallHashes(hashes) => hashes.len(),
             PageContent::NetPatches(patches) => patches.len(), // Number of ObjectIDs
+            PageContent::Snapshot(snapshot_payload) => snapshot_payload.container_states.len(), // Number of container states
         }
     }
 
@@ -392,6 +409,7 @@ impl JournalPage {
             PageContent::Leaves(leaves) => leaves.is_empty(),
             PageContent::ThrallHashes(hashes) => hashes.is_empty(),
             PageContent::NetPatches(patches) => patches.is_empty(),
+            PageContent::Snapshot(snapshot_payload) => snapshot_payload.container_states.is_empty(),
         }
     }
 

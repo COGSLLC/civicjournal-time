@@ -427,6 +427,15 @@ The architecture is designed to be extended in several ways:
    - Extend functionality without modifying core
    - Support for custom metrics, exporters, etc.
 
+4. **Application-Defined Triggers (Special Signals)**
+    *   **Concept**: CivicJournal-Time allows consuming applications to define "special signals" or triggers based on application-specific events. These triggers can programmatically initiate core journaling operations like rollups or snapshots.
+    *   **Purpose**:
+        *   **Enhanced Integrity for Critical Events**: For significant application events (e.g., finalization of a vote, completion of a major transaction), an immediate rollup can be triggered. This ensures the leaf data representing the event is quickly incorporated into higher-level, aggregated, and cryptographically secured pages, making the record more robust and its evidence more broadly distributed.
+        *   **Semantic Alignment**: Allows the journal's lifecycle events (rollups, snapshots) to align with meaningful milestones in the application's domain, rather than being driven solely by generic time intervals or data volume thresholds. For example, a specific date (e.g., fiscal year-end) could trigger a multi-level rollup to a "Yearly" page.
+    *   **Mechanism**:
+        *   Applications can "wire up" these triggers when integrating with CivicJournal-Time. This typically involves an API or configuration mechanism where the application registers specific events or conditions that, when met, will instruct the CivicJournal-Time instance to perform a designated action (e.g., `force_rollup(levels)`, `create_snapshot(params)`).
+        *   This provides a powerful way to customize the journaling behavior to closely match the application's operational logic and data significance.
+
 1. **Memory Usage**
    - Implement efficient memory pooling
    - Use streaming where possible
