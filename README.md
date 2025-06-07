@@ -330,8 +330,10 @@ journal.restore("./backups/journal_backup.zip").await?;
 ### Querying Data
 
 ```rust
-// Get inclusion proof for a leaf
-let proof = journal.get_leaf_inclusion_proof(leaf_hash).await?;
+// Get inclusion proof for a leaf (optional page hint for efficiency)
+let proof = journal
+    .get_leaf_inclusion_proof_with_hint(leaf_hash, Some((0, 42)))
+    .await?;
 
 // Reconstruct container state at a specific time
 let state = journal.reconstruct_state(
@@ -345,6 +347,16 @@ let changes = journal.get_delta_report(
     Utc.ymd(2023, 1, 1).and_hms(0, 0, 0),
     Utc.ymd(2023, 1, 2).and_hms(0, 0, 0)
 ).await?;
+// or fetch results in pages
+let first_page = journal
+    .get_delta_report_paginated(
+        "container-123",
+        Utc.ymd(2023, 1, 1).and_hms(0, 0, 0),
+        Utc.ymd(2023, 1, 2).and_hms(0, 0, 0),
+        0,
+        100,
+    )
+    .await?;
 
 // Verify page chain integrity
 let is_valid = journal.verify_page_chain(0, Some(1), Some(100)).await?;

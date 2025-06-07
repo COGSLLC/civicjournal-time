@@ -5,9 +5,10 @@ The query system provides read access and verification utilities for data stored
 ## Components
 
 - **`QueryEngine`** (`src/query/engine.rs`)
-  - `get_leaf_inclusion_proof`: returns a Merkle proof that a particular `JournalLeaf` exists in a page.
+  - `get_leaf_inclusion_proof_with_hint`: returns a Merkle proof that a particular `JournalLeaf` exists in a page, optionally using a `(level, page_id)` hint.
   - `reconstruct_container_state`: rebuilds a container's JSON state at a specific timestamp.
   - `get_delta_report`: lists all `JournalLeaf` changes for a container over a time window.
+  - `get_delta_report_paginated`: like `get_delta_report` but returns a slice of results using `offset` and `limit`.
   - `get_page_chain_integrity`: checks that a sequence of pages link correctly and have valid Merkle roots.
 - **Query types** (`src/query/types.rs`)
   - `QueryError`, `QueryPoint`, `LeafInclusionProof`, `ReconstructedState`, `DeltaReport`, `PageIntegrityReport`.
@@ -24,7 +25,9 @@ use chrono::Utc;
 
 let cfg = civicjournal_time::Config::default();
 let journal = Journal::new(&cfg).await?;
-let proof = journal.get_leaf_inclusion_proof(&leaf_hash).await?;
+let proof = journal
+    .get_leaf_inclusion_proof_with_hint(&leaf_hash, None)
+    .await?;
 let state = journal.reconstruct_container_state("container", Utc::now()).await?;
 ```
 
@@ -54,8 +57,7 @@ The async and sync APIs simply delegate to these methods. The FFI layer holds a 
 
 ## Current Limitations / Future Work
 
-- `get_leaf_inclusion_proof` performs a linear scan of level‑0 pages. Indexing or hints would improve performance.
-- Pagination for very large delta reports is not yet implemented.
+- `get_leaf_inclusion_proof_with_hint` still performs a linear scan of level‑0 pages when the hint does not match. Full indexing would improve performance.
 - The FFI only exposes container state retrieval; additional query functions may be exported as needed.
 
 The overall query interface is functional and can reconstruct state, produce delta reports, verify page integrity, and generate inclusion proofs, but efficiency improvements and broader FFI coverage remain open tasks.

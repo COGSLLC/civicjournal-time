@@ -118,6 +118,19 @@ impl Journal {
         self.query.get_leaf_inclusion_proof(leaf_hash).await.map_err(Into::into)
     }
 
+    /// Retrieves a leaf inclusion proof with an optional page hint to speed up lookups.
+    pub async fn get_leaf_inclusion_proof_with_hint(
+        &self,
+        leaf_hash: &[u8; 32],
+        page_id_hint: Option<(u8, u64)>,
+    ) -> CJResult<crate::query::types::LeafInclusionProof> {
+        self
+            .query
+            .get_leaf_inclusion_proof_with_hint(leaf_hash, page_id_hint)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Reconstructs the state of a container at a timestamp.
     pub async fn reconstruct_container_state(&self, container_id: &str, at: DateTime<Utc>) -> CJResult<crate::query::types::ReconstructedState> {
         self.query.reconstruct_container_state(container_id, at).await.map_err(Into::into)
@@ -126,6 +139,22 @@ impl Journal {
     /// Gets a delta report for a container between two timestamps.
     pub async fn get_delta_report(&self, container_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> CJResult<crate::query::types::DeltaReport> {
         self.query.get_delta_report(container_id, from, to).await.map_err(Into::into)
+    }
+
+    /// Gets a paginated delta report for a container between two timestamps.
+    pub async fn get_delta_report_paginated(
+        &self,
+        container_id: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+        offset: usize,
+        limit: usize,
+    ) -> CJResult<crate::query::types::DeltaReport> {
+        self
+            .query
+            .get_delta_report_paginated(container_id, from, to, offset, limit)
+            .await
+            .map_err(Into::into)
     }
 
     /// Checks integrity of a range of pages.

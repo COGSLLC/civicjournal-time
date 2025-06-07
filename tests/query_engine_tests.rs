@@ -196,6 +196,45 @@ async fn test_get_delta_report_partial_range_sorted() {
 }
 
 #[tokio::test]
+async fn test_get_delta_report_paginated() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let config = Arc::new(Config::default());
+    let storage = Arc::new(MemoryStorage::new());
+    let tm = Arc::new(TimeHierarchyManager::new(config.clone(), storage.clone()));
+    let engine = QueryEngine::new(storage.clone(), tm, config.clone());
+
+    let t0 = Utc::now();
+    let l1 = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
+    let l2 = JournalLeaf::new(t0 + Duration::seconds(1), Some(l1.leaf_hash), "c1".into(), json!({"b":2})).unwrap();
+    let l3 = JournalLeaf::new(t0 + Duration::seconds(2), Some(l2.leaf_hash), "c1".into(), json!({"c":3})).unwrap();
+
+    let mut page = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page.content {
+        v.push(l1.clone());
+        v.push(l2.clone());
+        v.push(l3.clone());
+    }
+    page.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page).await.unwrap();
+
+    let first = engine
+        .get_delta_report_paginated("c1", t0, t0 + Duration::seconds(3), 0, 2)
+        .await
+        .unwrap();
+    assert_eq!(first.deltas.len(), 2);
+    assert_eq!(first.deltas[0].leaf_hash, l1.leaf_hash);
+    assert_eq!(first.deltas[1].leaf_hash, l2.leaf_hash);
+
+    let second = engine
+        .get_delta_report_paginated("c1", t0, t0 + Duration::seconds(3), 2, 2)
+        .await
+        .unwrap();
+    assert_eq!(second.deltas.len(), 1);
+    assert_eq!(second.deltas[0].leaf_hash, l3.leaf_hash);
+}
+
+#[tokio::test]
 async fn test_delta_report_container_not_found_no_leaves_in_range() {
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
@@ -217,6 +256,7 @@ async fn test_delta_report_container_not_found_no_leaves_in_range() {
     assert!(matches!(res, Err(civicjournal_time::query::types::QueryError::ContainerNotFound(_))));
 }
 
+#[tokio::test]
 async fn test_leaf_inclusion_proof_success() {
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
@@ -243,6 +283,32 @@ async fn test_leaf_inclusion_proof_success() {
     let tree = MerkleTree::new(vec![leaf1.leaf_hash, leaf2.leaf_hash]).unwrap();
     assert_eq!(tree.get_root().unwrap(), page.merkle_root);
     assert!(verify_merkle_proof(leaf2.leaf_hash, &proof.proof, proof.page_merkle_root));
+}
+
+#[tokio::test]
+async fn test_leaf_inclusion_proof_with_hint() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let config = Arc::new(Config::default());
+    let storage = Arc::new(MemoryStorage::new());
+    let tm = Arc::new(TimeHierarchyManager::new(config.clone(), storage.clone()));
+    let engine = QueryEngine::new(storage.clone(), tm, config.clone());
+
+    let t0 = Utc::now();
+    let leaf = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
+    let mut page = JournalPage::new(0, None, t0, &config);
+    if let civicjournal_time::core::page::PageContent::Leaves(ref mut v) = page.content {
+        v.push(leaf.clone());
+    }
+    page.recalculate_merkle_root_and_page_hash();
+    storage.store_page(&page).await.unwrap();
+
+    let proof = engine
+        .get_leaf_inclusion_proof_with_hint(&leaf.leaf_hash, Some((0, page.page_id)))
+        .await
+        .unwrap();
+    assert_eq!(proof.page_id, page.page_id);
+    assert_eq!(proof.leaf.leaf_hash, leaf.leaf_hash);
 }
 
 #[derive(Debug, Clone)]
