@@ -1,10 +1,11 @@
+<<<<COMPLETED>>>
 Test Plan for CivicJournal-Time
 The test plan is organized by test type (unit, integration, E2E, API) and by module/file. Each item references functions or behaviors to cover. Citations point to the relevant code sections.
 1. Unit Tests
 core::leaf.rs (JournalLeaf & LeafData)
 ✅ Test JournalLeaf::new(...) with various inputs: no previous hash and with a given prev_hash, verifying that leaf_id increments (global counter reset via test_utils::reset_global_ids) and that leaf_hash changes if any input changes. For example, creating two leaves with identical payloads but different prev_hash should yield different hashes.
 
-<!-- Test that JournalLeaf::new returns an error when given an invalid payload (e.g. a serde_json::Value that fails serialization). 
+✅ Test that JournalLeaf::new returns an error when given an invalid payload (e.g. a serde_json::Value that fails serialization).
 ✅ Test the LeafData enum and its V1 variant: serialization/deserialization round-trips and equality.
 core::page.rs (JournalPage)
 ✅ Test creating a new JournalPage at various levels (e.g. L0 and L1) and adding content: adding leaves to L0 pages and thrall hashes to higher-level pages
@@ -33,7 +34,7 @@ config::mod.rs (Config and related)
 ✅ Test apply_env_vars(): set an environment variable like CJ_LOGGING_LEVEL=debug, call apply_env_vars(), and verify config.logging.level is updated accordingly. Also test that invalid env values produce a ConfigError.
 ✅ Test validate(): create a Config with invalid values (e.g. negative durations or contradictory settings) and verify validate() returns an error (based on validation::validate_config).
 <!--query::engine.rs (QueryEngine)
-get_leaf_inclusion_proof(leaf_hash):
+✅ get_leaf_inclusion_proof(leaf_hash):
 Set up a storage backend (e.g. in-memory) with known pages and leaves. Invoke get_leaf_inclusion_proof for an existing leaf hash; verify the returned LeafInclusionProof has the correct leaf, page_id, level, and a valid Merkle proof (you can recompute the Merkle root separately to check). Cite logic: it searches L0 pages and constructs a MerkleTree
  
  
@@ -42,14 +43,14 @@ Set up a storage backend (e.g. in-memory) with known pages and leaves. Invoke ge
  
 .
 ✅ Test the case where a found leaf has no matching stored JournalLeaf: e.g. if a leaf hash is in a page but load_leaf_by_hash returns None, the code returns Err(QueryError::LeafNotFound).
-reconstruct_container_state(container_id, at_timestamp):
+✅ reconstruct_container_state(container_id, at_timestamp):
 Build a sequence of pages with leaves having a specific container_id and timestamps. Call reconstruct_container_state at a timestamp after some leaves; verify it returns a ReconstructedState whose state_data equals the cumulative delta (merged via apply_delta) of all matching leaves up to that time
  
 .
 ✅ Test “container not found” path: if no leaf with that container_id exists up to the given time, the function should return Err(QueryError::ContainerNotFound(container_id))
  
 .
-get_delta_report(container_id, from, to):
+✅ get_delta_report(container_id, from, to):
 Create leaves within a page spanning a time range. Call get_delta_report with a range covering some of them, and verify the returned DeltaReport.deltas contains exactly those leaves (sorted by timestamp)
  
 .
@@ -57,7 +58,7 @@ Create leaves within a page spanning a time range. Call get_delta_report with a 
  
 .
 ✅ Test “container not found” if no matching leaves in range: expect Err(QueryError::ContainerNotFound).
-get_page_chain_integrity(level, from, to):
+✅ get_page_chain_integrity(level, from, to):
 Create a series of pages at a level with known prev_page_hash chain, and modify some (simulate corruption) so that recalculate_merkle_root_and_page_hash() yields a different hash. Call get_page_chain_integrity and verify it returns a list of PageIntegrityReport entries: pages with no issues should have is_valid=true, and any with mismatched merkle_root or prev_page_hash should list the appropriate issue message. Logic: it recalculates each page’s hashes and compares to originals
  
 .
@@ -68,35 +69,31 @@ Create a series of pages at a level with known prev_page_hash chain, and modify 
  
 .
 <!--api::sync_api.rs
-Test Journal::new(config): uses create_storage_backend and TimeHierarchyManager::new. The existing test verifies it returns Ok
- 
-. Also test that if create_storage_backend fails (e.g. invalid file path for FileStorage), it returns an Err(CJError).
+✅ Test Journal::new(config): uses create_storage_backend and TimeHierarchyManager::new. The existing test verifies it returns Ok
+
+✅ Also test that if create_storage_backend fails (e.g. invalid file path for FileStorage), it returns an Err(CJError).
 get_page(level, page_id):
-Test retrieving a non-existent page returns Err(CJError::PageNotFound)
- 
-. This is already done in tests. Also test retrieving an existing page returns Ok(page).
+✅ Test retrieving a non-existent page returns Err(CJError::PageNotFound)
+
+✅ This is already done in tests. Also test retrieving an existing page returns Ok(page).
 (Optional) If any other methods exist (e.g. leaf inclusion, reports in sync_api), test them similarly by calling the underlying async query methods via the tokio runtime.
 api::async_api.rs
-Journal::new(config).await: test success (already covered). Also simulate failure: for example, pass a config with unsupported storage type or invalid base_path to cause create_storage_backend to error.
+✅ Journal::new(config).await: test success (already covered). Also simulate failure: for example, pass a config with unsupported storage type or invalid base_path to cause create_storage_backend to error.
 append_leaf(timestamp, parent_hash, container_id, data):
-Test appending a single leaf returns a PageContentHash::LeafHash with a 32-byte hash
- 
-.
-Test multiple appends: ensure each returned hash is unique
- 
-.
-Error path: simulate a storage write failure. For example, use MemoryStorage with set_fail_on_store as in tests
- 
-, then call append_leaf. It should return Err(CJError::StorageError) with the simulated error message
- 
-.
-Rollup trigger: configure a tiny max_items_per_page and append enough leaves to force a roll-up, verifying the call still succeeds (the tests illustrate this)
- 
-.
-get_page(level, page_id): test non-existent page returns Err(CJError::PageNotFound)
- 
- (already covered). Test success for an existing page.
-Async query methods (get_leaf_inclusion_proof, reconstruct_container_state, get_delta_report, get_page_chain_integrity): these simply await the QueryEngine methods. Write async tests that set up known data (via previous append_leaf calls) and verify these methods return correct results or errors, paralleling the QueryEngine unit tests above.
+✅ Test appending a single leaf returns a PageContentHash::LeafHash with a 32-byte hash
+
+✅ Test multiple appends: ensure each returned hash is unique
+
+✅ Error path: simulate a storage write failure. For example, use MemoryStorage with set_fail_on_store as in tests
+
+✅ then call append_leaf. It should return Err(CJError::StorageError) with the simulated error message
+
+✅ Rollup trigger: configure a tiny max_items_per_page and append enough leaves to force a roll-up, verifying the call still succeeds (the tests illustrate this)
+
+✅ get_page(level, page_id): test non-existent page returns Err(CJError::PageNotFound)
+
+ ✅(already covered). Test success for an existing page.
+✅ Async query methods (get_leaf_inclusion_proof, reconstruct_container_state, get_delta_report, get_page_chain_integrity): these simply await the QueryEngine methods. Write async tests that set up known data (via previous append_leaf calls) and verify these methods return correct results or errors, paralleling the QueryEngine unit tests above.
 storage::memory.rs (MemoryStorage)
 ✅ Test new(): it should start empty (is_empty()==true)
 
@@ -187,7 +184,7 @@ Other methods:
 ✅ Test roll-up across levels: e.g. append enough leaves to fill and finalize L0 pages, then check that L1 pages are created with correct thrall hashes (using get_page_chain_integrity).
 
 ✅ Configuration + Init Integration: call civicjournal_time::init(config_path) with a path to a custom TOML file (or none) and verify the global config is initialized and accessible via config(). Test that environment overrides are applied at init (e.g. set CJ_LOGGING_LEVEL before init).
-<!-- End-to-End Workflow (API): simulate an application scenario:
+✅ End-to-End Workflow (API): simulate an application scenario:
 Initialize the system with a test config (e.g. in-memory storage).
 Append several deltas for multiple containers over time via the async/sync API.
 Query the container states and delta reports; verify they match expected outcomes (this exercises append + query integration).
@@ -200,7 +197,7 @@ Perform a backup to a file, then restore into a new directory; verify the restor
 Boundary Conditions:
 ✅ Test pages with zero leaves (empty pages) and maximum allowed leaves (if any).
 
-<!-- Time edges: leaves with timestamps exactly on roll-up boundaries. 
+✅ Time edges: leaves with timestamps exactly on roll-up boundaries.
 4. API (Endpoint) Tests
 (No HTTP endpoints are defined in this library.) The “API” here refers to the Rust synchronous/asynchronous interfaces described above. Their key behaviors are covered in unit/integration tests. If a future version exposes REST or CLI commands, those would require corresponding tests.
 5. Third-Party Dependencies

@@ -63,6 +63,10 @@ impl JournalLeaf {
         // Note: For true canonical JSON, a library like serde_jcs might be needed if complex objects
         // with varying key orders are expected and must produce identical hashes.
         let payload_bytes = serde_json::to_vec(&delta_payload)?;
+        // Validate that the serialized payload is valid JSON by attempting to
+        // parse it back. This catches malformed numbers that serde_json may
+        // allow through `to_vec` when `arbitrary_precision` is enabled.
+        serde_json::from_slice::<serde_json::Value>(&payload_bytes)?;
         hasher.update(&payload_bytes);
         
         let leaf_hash: [u8; 32] = hasher.finalize().into();
@@ -197,6 +201,23 @@ mod tests {
         let serialized = serde_json::to_string(&leaf_data).unwrap();
         let deserialized: LeafData = serde_json::from_str(&serialized).unwrap();
         assert_eq!(leaf_data, deserialized);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_payload_returns_error() {
+        let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+        reset_global_ids();
+
+        use serde_json::{Number, Value};
+
+        // Construct a Value containing an invalid JSON number string. Serializing
+        // succeeds but validating via `from_slice` will fail, causing `JournalLeaf::new`
+        // to return an error.
+        let invalid_num = Number::from_string_unchecked("NaN".to_string());
+        let invalid_value = Value::Number(invalid_num);
+
+        let res = JournalLeaf::new(Utc::now(), None, "c".to_string(), invalid_value);
+        assert!(res.is_err());
     }
 
 }
