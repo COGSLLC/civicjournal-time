@@ -25,6 +25,7 @@ fn build_single_level_config(max_items: usize, retention: Option<RollupRetention
                 retention_policy: retention,
             }],
         },
+        snapshot: Default::default(),
         force_rollup_on_shutdown: false,
         storage: StorageConfig { storage_type: StorageType::Memory, base_path: "".to_string(), max_open_files: 100 },
         compression: CompressionConfig::default(),
@@ -58,6 +59,7 @@ fn build_two_level_config(l0_max: usize, l1_max: usize) -> Config {
         logging: LoggingConfig::default(),
         metrics: MetricsConfig::default(),
         retention: RetentionConfig::default(),
+        snapshot: Default::default(), // Added missing field
     }
 }
 

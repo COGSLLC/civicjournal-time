@@ -35,6 +35,7 @@ fn create_test_config(compression_algo: CompressionAlgorithm) -> Arc<Config> {
         logging: Default::default(),
         metrics: Default::default(),
         retention: Default::default(),
+        snapshot: Default::default(), // Added missing field
         force_rollup_on_shutdown: false,
     })
 }

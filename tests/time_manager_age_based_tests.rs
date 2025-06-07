@@ -59,13 +59,14 @@ fn create_age_based_test_config(
                 },
             ],
         },
+        retention: Default::default(),
+        snapshot: Default::default(), // Added missing field
         force_rollup_on_shutdown: false,
         storage: StorageConfig {
             storage_type: StorageType::Memory,
             base_path: "./test_data".to_string(),
             max_open_files: 1000,
         },
-        retention: RetentionConfig {
             enabled: false,
             period_seconds: 0,
             cleanup_interval_seconds: 300,
@@ -81,9 +82,8 @@ fn create_age_based_test_config(
             enabled: false,
             endpoint: "".to_string(),
             push_interval_seconds: 15,
-        },
+        }
     }
-}
 
 #[tokio::test]
 async fn test_age_based_rollup() {

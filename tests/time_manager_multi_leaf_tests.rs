@@ -49,6 +49,7 @@ fn create_multi_leaf_test_config(l1_max_leaves: u32) -> Config {
             base_path: "./test_data".to_string(),
             max_open_files: 1000,
         },
+        snapshot: Default::default(), // Added missing field
         retention: RetentionConfig {
             enabled: false,
             period_seconds: 0,
