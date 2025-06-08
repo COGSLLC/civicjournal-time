@@ -17,6 +17,7 @@ use std::sync::Arc; // Added Arc for shared ownership
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use serde_json::json;
 use tokio::time::{timeout, Duration as TokioDuration};
+use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
 
 // Helper to create a config for testing, allowing retention customization
 fn create_test_config(
@@ -91,7 +92,9 @@ fn create_test_manager() -> (TimeHierarchyManager, Arc<MemoryStorage>) {
 
 #[tokio::test]
 async fn test_add_leaf_to_new_page_and_check_active() {
-    
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+
     let (manager, storage) = create_test_manager(); // Config from create_test_manager implies mlpp=1 for L0 & L1
     let now = Utc::now();
 
@@ -219,6 +222,8 @@ async fn test_add_leaf_to_new_page_and_check_active() {
 
 #[tokio::test]
 async fn test_single_rollup_max_items() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let (manager, storage) = create_test_manager(); // Config from create_test_manager: L0 (1s, mlpp=1), L1 (60s, mlpp=1), no L2.
     let timestamp1 = Utc::now();
@@ -399,6 +404,8 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
 
 #[tokio::test]
 async fn test_cascading_rollup_max_items() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let (manager, storage) = create_cascading_test_config_and_manager();
     let timestamp = Utc::now();
@@ -471,6 +478,8 @@ async fn test_cascading_rollup_max_items() {
 
 #[tokio::test]
 async fn test_retention_disabled() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let config = Arc::new(create_test_config(false, 60, None, None)); // Retention disabled, 60s period (irrelevant)
     let storage = Arc::new(MemoryStorage::new());
@@ -491,6 +500,8 @@ async fn test_retention_disabled() {
 
 #[tokio::test]
 async fn test_retention_period_zero() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     // Retention enabled, but period is 0 seconds
     let config = Arc::new(create_test_config(true, 0, None, None)); 
@@ -512,6 +523,8 @@ async fn test_retention_period_zero() {
 
 #[tokio::test]
 async fn test_retention_no_pages_old_enough() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let retention_period_seconds = 60;
     let config = Arc::new(create_test_config(true, retention_period_seconds, None, None)); 
@@ -533,6 +546,8 @@ async fn test_retention_no_pages_old_enough() {
 
 #[tokio::test]
 async fn test_retention_some_pages_deleted() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let retention_period_seconds = 60;
     let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
@@ -564,6 +579,8 @@ async fn test_retention_some_pages_deleted() {
 
 #[tokio::test]
 async fn test_retention_all_pages_deleted() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let retention_period_seconds = 60;
     let config = Arc::new(create_test_config(true, retention_period_seconds, None, None));
@@ -592,6 +609,8 @@ async fn test_retention_all_pages_deleted() {
 
 #[tokio::test]
 async fn test_retention_multi_level() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let retention_period_seconds = 60;
     // Config has 2 levels by default from create_test_config: L0 (1s), L1 (60s)
@@ -633,6 +652,8 @@ async fn test_retention_multi_level() {
 
 #[tokio::test]
 async fn test_retention_l0_keep_n_pages() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let keep_n = 2;
     let config = Arc::new(create_test_config(
@@ -675,6 +696,8 @@ async fn test_retention_l0_keep_n_pages() {
 
 #[tokio::test]
 async fn test_retention_l0_keep_n_pages_zero() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let config = Arc::new(create_test_config(
         true, 
@@ -706,6 +729,8 @@ async fn test_retention_l0_keep_n_pages_zero() {
 
 #[tokio::test]
 async fn test_retention_mixed_policies_l0_keep_n_l1_delete_after_secs() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     
     let l0_keep_n = 1;
     let l1_delete_after_secs = 30u64;
@@ -806,6 +831,8 @@ fn create_age_based_rollup_config_and_manager(
 
 #[tokio::test]
 async fn test_age_based_rollup_cascade() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let test_body = async {
         println!("[TEST-DEBUG] Starting test_age_based_rollup_cascade");
         
@@ -847,6 +874,8 @@ async fn test_age_based_rollup_cascade() {
 }
 #[tokio::test]
 async fn test_parent_rollup_when_page_capacity_exceeded() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let mut config = create_test_config(false, 0, None, None);
     if config.time_hierarchy.levels.len() > 1 {
         config.time_hierarchy.levels[1].rollup_config.max_items_per_page = 2;
@@ -891,6 +920,8 @@ async fn test_parent_rollup_when_page_capacity_exceeded() {
 
 #[tokio::test]
 async fn test_age_based_rollup_finalizes_parent_page() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let (manager, storage) = create_age_based_rollup_config_and_manager(2, 100, 4, 100);
     let base = Utc::now();
 
