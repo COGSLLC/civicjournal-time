@@ -23,7 +23,17 @@ This document outlines the **Demo Mode** for the Journal system. It provides sca
   * DB client (e.g., SQLx or Diesel)
   * Faker or lorem ipsum crate for fake content
 
-## 3. Configuration
+## 3. Quick Start
+
+Build and run the simulator with the optional `demo` feature:
+
+```bash
+cargo run --features demo --bin journal-demo -- run --mode batch
+```
+
+This generates demo data according to the `[demo]` section in `Journal.toml`.
+
+## 4. Configuration
 
 Add a `[demo]` section to your `Journal.toml`:
 
@@ -46,7 +56,7 @@ snapshot   = { every="P1Y" }
 * **rollup** thresholds\*\*: override production defaults for demo.
 * **snapshot.every**: ISO‑8601 interval for snapshots.
 
-## 4. Time Simulator
+## 5. Time Simulator
 
 * **Mode**: Batch vs. Live
 
@@ -58,7 +68,7 @@ snapshot   = { every="P1Y" }
   * Loop from `start_date` to `end_date`, advancing by one month per iteration.
   * Within each month, spawn `leaf_rate.per_real_second * rate` leaves.
 
-## 5. Leaf Generator
+## 6. Leaf Generator
 
 * For each tick:
 
@@ -70,7 +80,7 @@ snapshot   = { every="P1Y" }
 
 * **Traceability**: embed tags like `[demo:<month>:<seq>]` in content to aid tracing.
 
-## 6. Rollup Triggering
+## 7. Rollup Triggering
 
 * After each leaf insertion, check all configured levels:
 
@@ -79,7 +89,7 @@ snapshot   = { every="P1Y" }
 * Invoke `seal_page(level)` when conditions are met.
 * Support **burstiness** by injecting random spikes in `leaf_rate`.
 
-## 7. Snapshot Generation
+## 8. Snapshot Generation
 
 * At each interval defined by `snapshot.every` (e.g., yearly):
 
@@ -87,11 +97,11 @@ snapshot   = { every="P1Y" }
   * Log snapshot hashes.
   * Invoke **snap\_off** to archive lower rollup pages fully covered by this snapshot.
 
-## 8. Explorer Interface
+## 9. Explorer Interface
 
 Provide two options:
 
-### 8.1 CLI Tool
+### 9.1 CLI Tool
 
 ```
 journal-demo explore \
@@ -103,7 +113,7 @@ journal-demo explore \
 
 * Subcommands: `list-users`, `list-containers`, `get-state`, `trace-leaf <id>`.
 
-### 8.2 Minimal Web UI
+### 9.2 Minimal Web UI
 
 * Simple HTML + JS app served on `localhost:4000`
 * Endpoints:
@@ -113,7 +123,7 @@ journal-demo explore \
   * `/api/snapshots`
 * Visualize via D3 or plain tables.
 
-## 9. PostgreSQL Integration
+## 10. PostgreSQL Integration
 
 Demo Mode can run entirely using the file storage backend, but to better mimic a
 production deployment it should also insert each generated payload into a real
@@ -146,7 +156,7 @@ in sync.
   directly in SQL and cross-check with reconstructed snapshots.
 * Support a `--persist` flag to keep data between runs.
 
-## 10. Running the Demo
+## 11. Running the Demo
 
 ```bash
 # Batch mode:
@@ -159,14 +169,14 @@ journal-demo run --mode live --wipe
 journal-demo explore --help
 ```
 
-## 11. Tips & Best Practices
+## 12. Tips & Best Practices
 
 * **Seed control**: Fix `seed` for reproducible demos.
 * **Logging**: Use structured logs (JSON) with demo tags.
 * **Performance**: Increase DB pool size for high leaf rates.
 * **Monitoring**: Expose Prometheus metrics for pages/sec.
 
-## 12. Scaffold Hints
+## 13. Scaffold Hints
 
 * Directory layout:
 
@@ -182,7 +192,7 @@ journal-demo explore --help
 
 * Use feature flags: `--features demo` to include this module only in dev builds.
 
-## 13. Extending Demo Mode
+## 14. Extending Demo Mode
 
 * Add custom event patterns (e.g., mass forks/merges).
 * Support injecting failures to test recovery logic.
