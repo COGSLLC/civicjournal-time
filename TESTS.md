@@ -1,6 +1,7 @@
 # CivicJournal Time - Testing Strategy
 
 ## Table of Contents
+This document summarises how the CivicJournal-Time project is tested. It is provided for reference; casual users usually do not need to run these tests.
 1. [Testing Philosophy](#testing-philosophy)
 2. [Global Test Architecture](#global-test-architecture)
 3. [Test Types](#test-types)

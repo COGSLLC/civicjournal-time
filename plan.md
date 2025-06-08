@@ -143,7 +143,7 @@
 
 ## 0. Introduction
 
-This document outlines the development plan for CivicJournal Time, aiming to implement the core functionalities as described in `ARCHITECTURE.MD` and `CivicJournalSpec.txt`. The plan is divided into phases, with specific tasks and considerations for each.
+This document outlines the development plan for CivicJournal Time, aiming to implement the core functionalities as described in `ARCHITECTURE.md` and the accompanying documentation. The plan is divided into phases with specific tasks and considerations for each.
 
 ## 1. Phase 1: Core Journaling Engine
 
@@ -156,7 +156,7 @@ This phase focuses on building the fundamental data structures and logic for cre
 **Objective**: Define the `JournalLeaf` structure and its hash calculation.
 
 **Details**:
-*   Define the struct fields as per `CivicJournalSpec.txt`.
+*   Define the struct fields as outlined in the architecture documentation.
 *   Implement a function to calculate `LeafHash`.
 
 ```rust
@@ -215,7 +215,7 @@ impl JournalLeaf {
 **Objective**: Define the `JournalPage` structure, manage its leaf/thrall hashes, and calculate its hash.
 
 **Details**:
-*   Define struct fields as per `CivicJournalSpec.txt`.
+*   Define struct fields according to the current design documents.
 *   Store `Leaves(Vec<JournalLeaf>)` for level 0 or `ThrallHashes(Vec<[u8; 32]>)` for higher levels.
 *   Implement `PageHash` calculation.
 

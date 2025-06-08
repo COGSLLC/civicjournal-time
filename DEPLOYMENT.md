@@ -4,6 +4,8 @@
 
 **Last Updated**: 2025-06-08
 
+This guide describes how end users can install and run CivicJournal-Time.
+
 ## Table of Contents
 
 1. [System Requirements](#system-requirements)

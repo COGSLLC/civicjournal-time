@@ -1,6 +1,6 @@
 # Demo Mode Specification
 
-This document outlines the **Demo Mode** for the Journal system. It provides scaffolding, configuration hints, and tips for developers to generate, explore, and validate 20 years of simulated journal data.
+This document outlines the **Demo Mode** for the Journal system. It provides instructions for generating, exploring, and validating years of simulated journal data.
 
 ## 1. Overview
 
