@@ -112,7 +112,7 @@ async fn test_age_based_rollup() {
     drop(active_pages);
     
     // Wait for L0 page to exceed max age
-    sleep(TokioDuration::from_secs(l0_max_age + 1)).await;
+    sleep(TokioDuration::from_secs(l0_max_age + 2)).await;
     
     // Add another leaf to trigger rollup check
     let leaf2 = JournalLeaf::new(
@@ -153,7 +153,7 @@ async fn test_age_based_rollup() {
     drop(active_pages);
     
     // Wait for L1 page to exceed max age
-    sleep(TokioDuration::from_secs(l1_max_age - l0_max_age + 1)).await;
+    sleep(TokioDuration::from_secs(l1_max_age - l0_max_age + 2)).await;
     
     // Add another leaf to trigger L1 rollup check
     let leaf3 = JournalLeaf::new(

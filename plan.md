@@ -1,6 +1,8 @@
 # CivicJournal Time - Development Plan
 
-## Status Update (2025-06-05)
+## Status Update (2025-06-06)
+
+**Status**: BETA (v0.4.0) — core functionality complete. Remaining work focuses on performance optimizations, documentation, and advanced distributed features.
 
 ### Completed Tasks
 
@@ -74,12 +76,16 @@
    - [ ] Update `ARCHITECTURE.md` with current module structure
    - [ ] Ensure all public APIs have complete documentation
    - [ ] Add examples for common use cases
+   - [ ] Document Demo Mode usage and wiring instructions
+   - [ ] Verify minimum system requirements and update `DEPLOYMENT.md` if needed
+   - [ ] Document benchmarking approach and how to run `cargo bench`
 
 4. **Performance Optimization**
    - [ ] Profile rollup operations
    - [ ] Optimize page storage and retrieval
    - [ ] Add metrics collection
    - [ ] Implement caching for frequently accessed pages
+   - [ ] Establish baseline benchmarks using Criterion
 
 3. **Storage Improvements**
    - [x] Add compression support

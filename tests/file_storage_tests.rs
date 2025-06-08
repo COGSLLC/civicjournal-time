@@ -11,6 +11,7 @@ use std::path::Path;
 use chrono::{DateTime, Utc, Duration};
 use serde_json::json;
 use std::sync::Arc;
+use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
 use tempfile::tempdir;
 
 // Helper to create a test config with specified compression
@@ -70,6 +71,8 @@ fn create_test_leaf(timestamp: DateTime<Utc>) -> JournalLeaf {
 
 #[tokio::test]
 async fn test_file_storage_lifecycle() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let temp_dir = tempdir().unwrap();
     let config = create_test_config(CompressionAlgorithm::None);
     let storage = FileStorage::new(temp_dir.path().to_path_buf(), config.compression.clone()).await.unwrap();
@@ -102,6 +105,8 @@ async fn test_file_storage_lifecycle() {
 
 #[tokio::test]
 async fn test_compression_formats() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let formats = [
         CompressionAlgorithm::None,
         CompressionAlgorithm::Zstd,
@@ -133,6 +138,8 @@ async fn test_compression_formats() {
 
 #[tokio::test]
 async fn test_backup_and_restore() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     // Create test data
     let source_dir = tempdir().unwrap();
     let backup_dir = tempdir().unwrap();
@@ -181,6 +188,8 @@ async fn test_backup_and_restore() {
 
 #[tokio::test]
 async fn test_concurrent_access() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let temp_dir = tempdir().unwrap();
     let config = create_test_config(CompressionAlgorithm::None);
     let storage = Arc::new(FileStorage::new(temp_dir.path().to_path_buf(), config.compression.clone()).await.unwrap());
@@ -221,6 +230,8 @@ async fn test_concurrent_access() {
 
 #[tokio::test]
 async fn test_error_handling() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let temp_dir = tempdir().unwrap();
     let config = create_test_config(CompressionAlgorithm::None);
     let storage = FileStorage::new(temp_dir.path().to_path_buf(), config.compression.clone()).await.unwrap();
@@ -244,6 +255,8 @@ async fn test_error_handling() {
 
 #[tokio::test]
 async fn test_large_page_compression() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let formats = [
         CompressionAlgorithm::None,
         CompressionAlgorithm::Zstd,

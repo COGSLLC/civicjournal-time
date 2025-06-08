@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde_json::json;
 use tempfile::tempdir;
 use std::sync::Arc;
+use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
 
 // Helper to create a test config with specified compression
 fn create_test_config(compression_algo: CompressionAlgorithm) -> Arc<Config> {
@@ -64,6 +65,8 @@ fn create_test_page_with_leaves(level: u8, page_id: u64, timestamp: DateTime<Utc
 
 #[tokio::test]
 async fn test_backup_manifest_creation() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let temp_dir = tempdir().unwrap();
     let config = create_test_config(CompressionAlgorithm::Zstd);
     let storage = FileStorage::new(temp_dir.path().to_path_buf(), config.compression.clone())
@@ -124,6 +127,8 @@ async fn test_backup_manifest_creation() {
 
 #[tokio::test]
 async fn test_restore_with_verification() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     // Setup source storage
     let source_dir = tempdir().unwrap();
     let config = create_test_config(CompressionAlgorithm::Zstd);
@@ -175,6 +180,8 @@ async fn test_restore_with_verification() {
 
 #[tokio::test]
 async fn test_corrupted_backup_handling() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let temp_dir = tempdir().unwrap();
     let config = create_test_config(CompressionAlgorithm::None);
     let storage = FileStorage::new(temp_dir.path().to_path_buf(), config.compression.clone())
@@ -197,6 +204,8 @@ async fn test_corrupted_backup_handling() {
 
 #[tokio::test]
 async fn test_empty_journal_backup() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     let temp_dir = tempdir().unwrap();
     let config = create_test_config(CompressionAlgorithm::None);
     let storage = FileStorage::new(temp_dir.path().to_path_buf(), config.compression.clone())

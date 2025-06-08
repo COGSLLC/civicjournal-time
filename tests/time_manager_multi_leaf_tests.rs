@@ -10,6 +10,7 @@ use civicjournal_time::config::{
 use civicjournal_time::StorageType;
 use civicjournal_time::LogLevel;
 use civicjournal_time::core::leaf::JournalLeaf;
+use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
 use std::sync::Arc;
 use chrono::Utc;
 use serde_json::json;
@@ -72,6 +73,8 @@ compression: CompressionConfig::default(),
 
 #[tokio::test]
 async fn test_multi_leaf_parent_rollup() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
     // Configure L1 to accumulate 3 thrall hashes before finalizing
     let l1_max_leaves = 3;
     let config = Arc::new(create_multi_leaf_test_config(l1_max_leaves));
