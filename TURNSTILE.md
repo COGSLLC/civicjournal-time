@@ -2,6 +2,8 @@ Turnstile System Documentation (CivicJournal-Time)
 
 Table of Contents
 
+This document provides a high level description of the optional Turnstile queue used with CivicJournal-Time.
+
 Introduction
 
 Concept Overview

@@ -2,6 +2,8 @@
 
 This document details the integrated mechanism for data aggregation (Rollups) and system state capture (Snapshots) within CivicJournal-Time, emphasizing their synergistic relationship for efficient storage, verifiable history, and performant state reconstruction.
 
+The information below is written for users who want to understand how snapshots behave in the shipped software.
+
 ### 1. Rollup Mechanism (Aggregation & Hierarchical Folding)
 
 The rollup mechanism is fundamental to CivicJournal-Time's hierarchical structure, grouping and aggregating `JournalLeaf` events into progressively coarser time epochs.

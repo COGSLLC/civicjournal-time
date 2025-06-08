@@ -116,6 +116,23 @@ WASM FFI bindings under `src/ffi/`. The optional Turnstile pattern uses these
 bindings to coordinate writes with external databases while ensuring
 append-only guarantees.
 
+## Quick Start
+
+Add the crate to your project and create a journal:
+
+```bash
+cargo add civicjournal-time
+```
+
+```rust
+use civicjournal_time::{Journal, default_config};
+
+let cfg = default_config();
+let mut journal = Journal::new(cfg)?;
+journal.append_leaf("example", serde_json::json!({"msg": "hello"}))?;
+```
+
+
 ## Project Structure
 
 ```
@@ -487,9 +504,10 @@ The codebase includes several capabilities that are not required for basic usage
 For more in-depth information, please refer to the following documents in the repository:
 
 *   `ARCHITECTURE.md`: Describes the overall system architecture.
-*   `ROLLUP.MD`: Details the rollup mechanism.
-*   `CivicJournalSpec.txt`: (Note: This document may contain some outdated information regarding page structure and file formats. Prioritize information from `README.md`, `ARCHITECTURE.MD`, and `ROLLUP.MD`.)
-*   `plan.md`: Tracks development progress and future plans.
+*   `ROLLUP.md`: Details the rollup mechanism.
+*   `SNAPSHOT.md`: Snapshot and restore procedures.
+*   `QUERY.md`: Data retrieval and verification tools.
+*   `plan.md`: Development progress and future plans.
 
 ## Contributing
 
