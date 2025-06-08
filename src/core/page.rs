@@ -8,6 +8,7 @@ use crate::core::merkle::MerkleTree;
 use crate::core::leaf::JournalLeaf;
 use crate::core::snapshot::SnapshotPagePayload;
 use crate::config::Config; // Added for calculating end_time
+use log;
 use crate::types::time::RollupContentType;
 
 /// Type alias for a Merkle root, which is a SHA256 hash ([u8; 32]).
@@ -269,11 +270,11 @@ impl JournalPage {
         }
         match self.content {
             PageContent::ThrallHashes(ref mut hashes) => {
-                println!("[ADD_THRALL_HASH_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
+                log::debug!("[ADD_THRALL_HASH_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
                 if self.first_child_ts.is_none() {
                     self.first_child_ts = Some(content_timestamp);
                 }
-                println!("[ADD_THRALL_HASH_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
+                log::debug!("[ADD_THRALL_HASH_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
                 if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
                     self.last_child_ts = Some(content_timestamp);
                 }
@@ -299,11 +300,11 @@ impl JournalPage {
                     }
                 }
 
-                println!("[MERGE_NET_PATCHES_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
+                log::debug!("[MERGE_NET_PATCHES_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
                 if self.first_child_ts.is_none() {
                     self.first_child_ts = Some(content_timestamp);
                 }
-                println!("[MERGE_NET_PATCHES_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
+                log::debug!("[MERGE_NET_PATCHES_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
                 if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
                     self.last_child_ts = Some(content_timestamp);
                 }
@@ -339,7 +340,7 @@ impl JournalPage {
                                     // Serialize value to canonical bytes
                                     let value_bytes = serde_json::to_vec(value_json)
                                         .unwrap_or_else(|e| {
-                                            eprintln!("Failed to serialize NetPatch value to JSON: {}", e);
+                                        log::error!("Failed to serialize NetPatch value to JSON: {}", e);
                                             Vec::new()
                                         });
                                     let value_hash: [u8; 32] = Sha256::digest(&value_bytes).into();
@@ -374,7 +375,7 @@ impl JournalPage {
         } else {
             MerkleTree::new(actual_leaf_hashes)
                 .map_err(|e| {
-                    eprintln!("Error creating Merkle tree: {:?}", e);
+                    log::error!("Error creating Merkle tree: {:?}", e);
                     e
                 })
                 .ok()
@@ -454,7 +455,7 @@ impl JournalPage {
         let is_over_age = max_age.map_or(false, |max_age| calculated_age >= max_age);
         let is_outside_window = new_leaf_timestamp >= self.end_time;
 
-        println!("[JP_SHOULD_FINALIZE_AGE] Checking is_over_age: operation_time = {:?}, oldest_ts = {:?}, max_age = {:?}", operation_time, oldest_ts, max_age);
+        log::debug!("[JP_SHOULD_FINALIZE_AGE] Checking is_over_age: operation_time = {:?}, oldest_ts = {:?}, max_age = {:?}", operation_time, oldest_ts, max_age);
 
         (is_over_max_leaves || is_over_age, is_outside_window)
     }

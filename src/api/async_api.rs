@@ -21,8 +21,10 @@ pub enum PageContentHash {
 
 /// Provides an asynchronous API for interacting with the CivicJournal.
 pub struct Journal {
-    manager: Arc<TimeHierarchyManager>,
-    query: crate::query::QueryEngine,
+    /// Exposed for integration testing and demo utilities.
+    pub manager: Arc<TimeHierarchyManager>,
+    /// Query engine used by the journal.
+    pub query: crate::query::QueryEngine,
 }
 
 impl Journal {
@@ -105,7 +107,13 @@ impl Journal {
     pub async fn get_page(&self, level: u8, page_id: u64) -> CJResult<JournalPage> {
         match self.manager.load_page_from_storage(level, page_id).await {
             Ok(Some(page)) => Ok(page),
-            Ok(None) => Err(CJError::PageNotFound { level, page_id }),
+            Ok(None) => {
+                if let Some(active) = self.manager.get_active_page_by_id(level, page_id).await {
+                    Ok(active)
+                } else {
+                    Err(CJError::PageNotFound { level, page_id })
+                }
+            }
             Err(e) => Err(CJError::StorageError(format!(
                 "Failed to load page L{}P{}: {}",
                 level, page_id, e
@@ -160,6 +168,32 @@ impl Journal {
     /// Checks integrity of a range of pages.
     pub async fn get_page_chain_integrity(&self, level: u8, from: Option<u64>, to: Option<u64>) -> CJResult<Vec<crate::query::types::PageIntegrityReport>> {
         self.query.get_page_chain_integrity(level, from, to).await.map_err(Into::into)
+    }
+
+    /// Applies retention policies immediately. This can be used by demo utilities to force
+    /// clean up or roll up finalized pages according to the configured policies.
+    pub async fn apply_retention_policies(&self) -> CJResult<()> {
+        self.manager.apply_retention_policies().await.map_err(Into::into)
+    }
+
+    /// Creates a snapshot as of the specified timestamp using the same internal state as the journal.
+    pub async fn create_snapshot(
+        &self,
+        as_of_timestamp: DateTime<Utc>,
+        container_ids: Option<Vec<String>>,
+    ) -> CJResult<[u8; 32]> {
+        use crate::core::snapshot_manager::SnapshotManager;
+
+        let snapshot_manager = SnapshotManager::new(
+            self.query.config(),
+            self.query.storage(),
+            self.query.time_manager(),
+        );
+
+        snapshot_manager
+            .create_snapshot(as_of_timestamp, container_ids)
+            .await
+            .map_err(|e| CJError::new(format!("Snapshot error: {:?}", e)))
     }
 }
 

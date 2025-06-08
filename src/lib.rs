@@ -23,6 +23,9 @@ pub mod storage;
 /// Time-related utilities, including hierarchy levels and time units.
 pub mod time;
 pub mod types;
+#[cfg(feature = "demo")]
+/// Demo mode for generating and exploring synthetic data.
+pub mod demo;
 /// Utilities for testing purposes only, compiled with `#[cfg(test)]`.
 pub mod test_utils;
 

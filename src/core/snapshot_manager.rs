@@ -100,7 +100,7 @@ impl SnapshotManager {
             return Err(SnapshotError::ConfigError("Snapshot feature is not enabled.".to_string()));
         }
 
-        println!(
+        log::info!(
             "[SnapshotManager] Initiating snapshot creation for as_of_timestamp: {}, containers: {:?}",
             as_of_timestamp, container_ids
         );
@@ -111,7 +111,7 @@ impl SnapshotManager {
 
         for level_idx in 0..num_levels {
             let level = level_idx as u8;
-            println!("[SnapshotManager] Fetching finalized pages for level {}", level);
+            log::debug!("[SnapshotManager] Fetching finalized pages for level {}", level);
             match self.storage.list_finalized_pages_summary(level).await {
                 Ok(summaries) => {
                     for summary in summaries {
@@ -154,12 +154,12 @@ impl SnapshotManager {
                 }
             }
         }
-        println!("[SnapshotManager] Retrieved {} finalized pages relevant to snapshot as_of_timestamp: {}.", finalized_pages.len(), as_of_timestamp);
+        log::debug!("[SnapshotManager] Retrieved {} finalized pages relevant to snapshot as_of_timestamp: {}.", finalized_pages.len(), as_of_timestamp);
 
         // Get a consistent read of active L0 page data via TimeHierarchyManager.
         let active_l0_leaves = match self.time_manager.get_active_l0_leaves_up_to(as_of_timestamp).await {
             Ok(leaves) => {
-                println!("[SnapshotManager] Retrieved {} active L0 leaves up to {}.", leaves.len(), as_of_timestamp);
+                log::debug!("[SnapshotManager] Retrieved {} active L0 leaves up to {}.", leaves.len(), as_of_timestamp);
                 leaves
             }
             Err(e) => {
@@ -220,13 +220,13 @@ impl SnapshotManager {
         };
 
         if target_container_ids.is_empty() && container_ids.is_none() {
-            println!("[SnapshotManager] No active containers found to snapshot based on available data up to {}.", as_of_timestamp);
+            log::debug!("[SnapshotManager] No active containers found to snapshot based on available data up to {}.", as_of_timestamp);
         }
 
         let mut snapshot_container_states: Vec<SnapshotContainerState> = Vec::new();
 
         for container_id_str in target_container_ids {
-            println!("[SnapshotManager] Reconstructing state for container: {}", container_id_str);
+            log::debug!("[SnapshotManager] Reconstructing state for container: {}", container_id_str);
             let mut current_container_state_map: HashMap<String, serde_json::Value> = HashMap::new();
             
             let mut container_specific_leaves: Vec<JournalLeaf> = Vec::new();
@@ -390,7 +390,7 @@ impl SnapshotManager {
 
         match self.storage.store_page(&snapshot_journal_page).await {
             Ok(()) => {
-                println!(
+                log::info!(
                     "[SnapshotManager] Successfully created and stored snapshot ID: {} with page hash: {:?}",
                     snapshot_payload.snapshot_id,
                     snapshot_journal_page.page_hash

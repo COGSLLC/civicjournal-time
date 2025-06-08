@@ -100,9 +100,18 @@ impl TimeHierarchyManager {
     /// * `config` - The application configuration, wrapped in an `Arc`.
     /// * `storage` - The storage backend, wrapped in an `Arc`.
     pub fn new(config: Arc<Config>, storage: Arc<dyn StorageBackend>) -> Self {
-        println!("[THM_NEW_CONFIG_CHECK] Initializing with Config. L0 duration_seconds: {}, L0 max_items_per_page: {}",
-            config.time_hierarchy.levels.get(0).map_or(0, |l| l.duration_seconds), // Default to 0 if not found, to make it obvious if L0 config is missing
-            config.time_hierarchy.levels.get(0).map_or(0, |l| l.rollup_config.max_items_per_page) // Default to 0 if not found
+        log::debug!(
+            "Initializing TimeHierarchyManager. L0 duration_seconds: {}, L0 max_items_per_page: {}",
+            config
+                .time_hierarchy
+                .levels
+                .get(0)
+                .map_or(0, |l| l.duration_seconds),
+            config
+                .time_hierarchy
+                .levels
+                .get(0)
+                .map_or(0, |l| l.rollup_config.max_items_per_page)
         );
         // TODO: Initialize active_pages by trying to load the latest open page for each level
         // from storage. This is important for resuming operations after a restart.
@@ -189,47 +198,66 @@ impl TimeHierarchyManager {
         active_pages_guard.get(&level).map(|page_entry| page_entry.page_id)
     }
 
+    /// Returns a clone of the active page for the given level and page id, if it exists.
+    pub async fn get_active_page_by_id(
+        &self,
+        level: u8,
+        page_id: u64,
+    ) -> Option<JournalPage> {
+        let active_pages_guard = self.active_pages.lock().await;
+        active_pages_guard
+            .get(&level)
+            .filter(|p| p.page_id == page_id)
+            .cloned()
+    }
+
+    /// Returns a clone of the currently active page for the given level, if any.
+    pub async fn get_active_page(&self, level: u8) -> Option<JournalPage> {
+        let active_pages_guard = self.active_pages.lock().await;
+        active_pages_guard.get(&level).cloned()
+    }
+
     /// Gets the current active page for level 0 for the given leaf, or creates a new one.
     /// This is a simplified version; a more robust impl would check storage for existing pages
     /// that fit the leaf's timestamp if no active page is found or if the active page is not suitable.
     async fn get_or_create_active_page_for_leaf(&self, leaf: &JournalLeaf) -> Result<JournalPage, CJError> {
-        println!("[GOCAPL] Called for leaf ts: {}, level: 0", leaf.timestamp);
+        log::debug!("[GOCAPL] Called for leaf ts: {}, level: 0", leaf.timestamp);
         let level_idx = 0; // Base level for leaves
         let mut active_pages_guard = self.active_pages.lock().await;
         let (window_start, _window_end) = self.get_page_window(level_idx, leaf.timestamp)?;
 
-        println!("[GOCAPL_DBG] About to call contains_key for level {}", level_idx);
+        log::debug!("[GOCAPL_DBG] About to call contains_key for level {}", level_idx);
         let key_exists = active_pages_guard.contains_key(&(level_idx as u8));
-        println!("[GOCAPL_DBG] Called contains_key for level {}, exists: {}", level_idx, key_exists);
+        log::debug!("[GOCAPL_DBG] Called contains_key for level {}, exists: {}", level_idx, key_exists);
 
-        println!("[GOCAPL_DBG] About to call get_mut for level {}", level_idx);
+        log::debug!("[GOCAPL_DBG] About to call get_mut for level {}", level_idx);
         // Access the HashMap through the guard
         if let Some(active_page_ref_cloned) = active_pages_guard.get(&(level_idx as u8)).cloned() {
-            println!("[GOCAPL_DBG] Found active page entry for level {}. Cloning for checks.", level_idx);
-            println!("[GOCAPL] Active page L{}P{} (created: {}, ends: {}, leaves: {}). Leaf ts: {}.",
+            log::debug!("[GOCAPL_DBG] Found active page entry for level {}. Cloning for checks.", level_idx);
+            log::debug!("[GOCAPL] Active page L{}P{} (created: {}, ends: {}, leaves: {}). Leaf ts: {}.",
                      active_page_ref_cloned.level, active_page_ref_cloned.page_id,
                      active_page_ref_cloned.creation_timestamp, active_page_ref_cloned.end_time,
                      active_page_ref_cloned.content_len(), leaf.timestamp);
 
             let is_in_window = leaf.timestamp >= active_page_ref_cloned.creation_timestamp && leaf.timestamp < active_page_ref_cloned.end_time;
-            println!("[GOCAPL] Timestamp check (leaf >= page_start && leaf < page_end): {}", is_in_window);
+            log::debug!("[GOCAPL] Timestamp check (leaf >= page_start && leaf < page_end): {}", is_in_window);
 
             if is_in_window {
                 let has_space = active_page_ref_cloned.content_len() < self.config.time_hierarchy.levels[0].rollup_config.max_items_per_page;
-                println!("[GOCAPL] Space check (leaves < max_leaves): {}", has_space);
+                log::debug!("[GOCAPL] Space check (leaves < max_leaves): {}", has_space);
                 if has_space {
-                    println!("[GOCAPL] Reusing (from active_pages) page L{}P{}.", active_page_ref_cloned.level, active_page_ref_cloned.page_id);
+                    log::debug!("[GOCAPL] Reusing (from active_pages) page L{}P{}.", active_page_ref_cloned.level, active_page_ref_cloned.page_id);
                     // active_pages_guard is dropped when function returns because active_page_ref_cloned is a clone
                     return Ok(active_page_ref_cloned); // Return the cloned page
                 } else { // In window, but NO space (full)
-                    println!("[GOCAPL] Active page L{}P{} is full. Finalizing it.", active_page_ref_cloned.level, active_page_ref_cloned.page_id);
+                    log::debug!("[GOCAPL] Active page L{}P{} is full. Finalizing it.", active_page_ref_cloned.level, active_page_ref_cloned.page_id);
                     let page_to_finalize_from_active = active_pages_guard.remove(&(level_idx as u8)).expect("Page existed in active_pages and should be removable");
                     drop(active_pages_guard); // Release lock before await
                     self.finalize_and_rollup_page(page_to_finalize_from_active, leaf.timestamp).await?;
                     // Fall through to load/create logic after this block
                 }
             } else { // NOT in window (too old or too new for this page)
-                println!("[GOCAPL] Leaf ts {} is outside active page L{}P{} window [{}, {}). Finalizing it.",
+                log::debug!("[GOCAPL] Leaf ts {} is outside active page L{}P{} window [{}, {}). Finalizing it.",
                          leaf.timestamp, active_page_ref_cloned.level, active_page_ref_cloned.page_id,
                          active_page_ref_cloned.creation_timestamp, active_page_ref_cloned.end_time);
                 let page_to_finalize_from_active = active_pages_guard.remove(&(level_idx as u8)).expect("Page existed in active_pages and should be removable");
@@ -238,7 +266,7 @@ impl TimeHierarchyManager {
                 // Fall through to load/create logic after this block
             }
         } else { // No active page for this level
-            println!("[GOCAPL_DBG] No active page found for level {}.", level_idx);
+            log::debug!("[GOCAPL_DBG] No active page found for level {}.", level_idx);
             drop(active_pages_guard); // Release lock as we're done with active_pages for now
             // Fall through to load/create logic after this block
         }
@@ -284,8 +312,8 @@ impl TimeHierarchyManager {
             window_start,
             &self.config,
         );
-        println!("[GOCAPL] Proceeding to create new page L{}P{}.", new_page.level, new_page.page_id);
-        println!("[GOCAPL] New page creation timestamp: {}", new_page.creation_timestamp);
+        log::debug!("[GOCAPL] Proceeding to create new page L{}P{}.", new_page.level, new_page.page_id);
+        log::debug!("[GOCAPL] New page creation timestamp: {}", new_page.creation_timestamp);
         Ok(new_page)
     }
 
@@ -294,9 +322,9 @@ impl TimeHierarchyManager {
         let (window_start, _window_end) = self.get_page_window(parent_level_idx as usize, triggering_timestamp)?;
         let mut active_pages_guard = self.active_pages.lock().await;
 
-        println!("[GOCAPP_DBG] Attempting active_pages_guard.get_mut(&{}) for parent.", parent_level_idx);
+        log::debug!("[GOCAPP_DBG] Attempting active_pages_guard.get_mut(&{}) for parent.", parent_level_idx);
         if let Some(active_page_entry) = active_pages_guard.get_mut(&parent_level_idx) {
-            println!("[GOCAPP_DBG] Success self.active_pages.get_mut(&{}) for parent. Entry found.", parent_level_idx);
+            log::debug!("[GOCAPP_DBG] Success self.active_pages.get_mut(&{}) for parent. Entry found.", parent_level_idx);
             // Check if the current active page is suitable
             let is_in_window = triggering_timestamp >= active_page_entry.creation_timestamp && triggering_timestamp < active_page_entry.end_time;
             if is_in_window {
@@ -306,12 +334,12 @@ impl TimeHierarchyManager {
                     })?;
                 let has_space = active_page_entry.content_len() < level_config_for_space_check.rollup_config.max_items_per_page;
                 if has_space {
-                    println!("[GOCAPP] Reusing active page L{}P{} for parent.", active_page_entry.level, active_page_entry.page_id);
+                    log::debug!("[GOCAPP] Reusing active page L{}P{} for parent.", active_page_entry.level, active_page_entry.page_id);
                     return Ok(active_page_entry.clone()); // Lock guard drops automatically here
                 }
             }
         } else {
-            println!("[GOCAPP_DBG] No active page found for parent level {} via get_mut.", parent_level_idx);
+            log::debug!("[GOCAPP_DBG] No active page found for parent level {} via get_mut.", parent_level_idx);
         }
         
         drop(active_pages_guard); // Release lock before potentially long storage operations or new page creation
@@ -332,7 +360,7 @@ impl TimeHierarchyManager {
                 if loaded_page.creation_timestamp == window_start &&
                    loaded_page.end_time == (window_start + level_config.duration()) &&
                    (loaded_page.content_len()) < self.config.time_hierarchy.levels[parent_level_idx as usize].rollup_config.max_items_per_page {
-                    println!("[GOCAPP] Loaded and reusing page L{}P{} for parent from storage.", loaded_page.level, loaded_page.page_id);
+                    log::debug!("[GOCAPP] Loaded and reusing page L{}P{} for parent from storage.", loaded_page.level, loaded_page.page_id);
                     return Ok(loaded_page);
                 }
             }
@@ -345,7 +373,7 @@ impl TimeHierarchyManager {
             window_start,
             &self.config,
         );
-        println!("[GOCAPP] Created new page L{}P{} for parent.", new_page.level, new_page.page_id);
+        log::debug!("[GOCAPP] Created new page L{}P{} for parent.", new_page.level, new_page.page_id);
         Ok(new_page)
     }
 
@@ -369,10 +397,10 @@ impl TimeHierarchyManager {
     /// - The leaf cannot be added to the page (e.g., out of order)
     /// - The page cannot be stored after finalization
     pub async fn add_leaf(&self, leaf: &JournalLeaf, operation_time: DateTime<Utc>) -> Result<u64, CJError> {
-        println!("[ADD_LEAF] Called for leaf ts: {}", leaf.timestamp);
+        log::debug!("[ADD_LEAF] Called for leaf ts: {}", leaf.timestamp);
         let mut page = self.get_or_create_active_page_for_leaf(leaf).await?;
         let original_page_id = page.page_id; // For logging
-        println!("[ADD_LEAF] Obtained page L{}P{} for leaf. Current content_len: {}", page.level, page.page_id, page.content_len());
+        log::debug!("[ADD_LEAF] Obtained page L{}P{} for leaf. Current content_len: {}", page.level, page.page_id, page.content_len());
 
         let level_config = &self.config.time_hierarchy.levels[page.level as usize];
         let max_items = level_config.rollup_config.max_items_per_page;
@@ -386,7 +414,7 @@ impl TimeHierarchyManager {
         let pre_finalize = page.should_finalize(leaf.timestamp, operation_time, max_items as u32, max_age);
         if pre_finalize.0 && operation_time > leaf.timestamp && !page.is_content_empty() {
             page.recalculate_merkle_root_and_page_hash();
-            println!(
+            log::debug!(
                 "[ADD_LEAF] Pre-finalizing page L{}P{} before inserting new leaf. Hash: {:.8}",
                 page.level,
                 page.page_id,
@@ -407,20 +435,20 @@ impl TimeHierarchyManager {
             self.perform_rollup(page.level, page.page_hash, leaf.timestamp).await?;
             // Acquire a fresh page after finalizing the old one
             page = self.get_or_create_active_page_for_leaf(leaf).await?;
-            println!("[ADD_LEAF] Obtained new page L{}P{} after pre-finalization", page.level, page.page_id);
+            log::debug!("[ADD_LEAF] Obtained new page L{}P{} after pre-finalization", page.level, page.page_id);
         }
 
         let _was_empty = page.is_content_empty();
         page.add_leaf(leaf.clone()); // This can fail if leaf is out of order for page (panics)
-        println!("[ADD_LEAF] Leaf added to L{}P{}. New content_len: {}", page.level, page.page_id, page.content_len());
+        log::debug!("[ADD_LEAF] Leaf added to L{}P{}. New content_len: {}", page.level, page.page_id, page.content_len());
 
 
 let should_finalize_page = page.should_finalize(leaf.timestamp, operation_time, max_items as u32, max_age);
-println!("[TIME_MANAGER] add_leaf: L{} P{} - Should Finalize: {:?}. Max Items: {}, Max Age: {:?}, Op Time: {}",
+log::debug!("[TIME_MANAGER] add_leaf: L{} P{} - Should Finalize: {:?}. Max Items: {}, Max Age: {:?}, Op Time: {}",
     page.level, page.page_id, should_finalize_page, max_items, max_age, operation_time);
 if should_finalize_page.0 || should_finalize_page.1 {
     page.recalculate_merkle_root_and_page_hash(); // Finalize hash before storing
-    println!("[ADD_LEAF] Finalizing page L{}P{} as it should_finalize. Hash: {:.8}",
+    log::debug!("[ADD_LEAF] Finalizing page L{}P{} as it should_finalize. Hash: {:.8}",
         page.level, page.page_id,
         page.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>());
     self.storage.store_page(&page).await?;
@@ -437,7 +465,7 @@ if should_finalize_page.0 || should_finalize_page.1 {
     active_pages_guard.remove(&page.level);
     drop(active_pages_guard); // Release lock before calling perform_rollup
 
-    println!(
+    log::debug!(
         "[ADD_LEAF] Removed L{}P{} from active_pages. Triggering rollup.",
         page.level, page.page_id
     );
@@ -466,11 +494,11 @@ Ok(original_page_id)
     /// Returns `CJError` if an error occurs while applying retention policies
     pub async fn apply_retention_policies(&self) -> Result<(), CJError> {
     let now = Utc::now();
-    println!("[Retention] Applying retention policies. Current time: {}", now);
+    log::debug!("[Retention] Applying retention policies. Current time: {}", now);
 
     for (level_idx, level_config) in self.config.time_hierarchy.levels.iter().enumerate() {
         let level = level_idx as u8;
-        println!("[Retention] Processing L{}", level);
+        log::debug!("[Retention] Processing L{}", level);
 
         let default_global_policy;
         if self.config.retention.enabled {
@@ -483,86 +511,86 @@ Ok(original_page_id)
         match effective_policy {
             RollupRetentionPolicy::DeleteAfterSecs(retention_seconds) => {
                 if *retention_seconds == 0 {
-                    println!("[Retention] L{}: Policy is DeleteAfterSecs(0). No pages will be deleted by age under this specific policy.", level);
+                    log::debug!("[Retention] L{}: Policy is DeleteAfterSecs(0). No pages will be deleted by age under this specific policy.", level);
                     // No further action for DeleteAfterSecs(0)
                 } else {
                     let retention_duration_for_level = chrono::TimeDelta::seconds(*retention_seconds as i64);
                     let cutoff_time = now - retention_duration_for_level;
-                    println!("[Retention] L{}: Applying DeleteAfterSecs policy ({}s), cutoff_time: {}", level, retention_seconds, cutoff_time);
+                    log::debug!("[Retention] L{}: Applying DeleteAfterSecs policy ({}s), cutoff_time: {}", level, retention_seconds, cutoff_time);
 
                     let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
                         Ok(summaries) => summaries,
                         Err(e) => {
-                            eprintln!("[Retention] L{}: Error listing finalized pages: {}. Skipping level.", level, e);
+                        log::error!("[Retention] L{}: Error listing finalized pages: {}. Skipping level.", level, e);
                             continue; // Skip to next level
                         }
                     };
 
                     if page_summaries.is_empty() {
-                        println!("[Retention] L{}: No finalized pages found.", level);
+                        log::debug!("[Retention] L{}: No finalized pages found.", level);
                         continue; // Skip to next level
                     }
-                    println!("[Retention] L{}: Found {} finalized pages.", level, page_summaries.len());
+                    log::debug!("[Retention] L{}: Found {} finalized pages.", level, page_summaries.len());
 
                     for summary in page_summaries {
                         if summary.end_time > now { // Page ends in the future, should not happen for finalized pages typically
-                            println!("[Retention] L{}/{}: Skipping, end_time {} is in the future.", level, summary.page_id, summary.end_time);
+                            log::debug!("[Retention] L{}/{}: Skipping, end_time {} is in the future.", level, summary.page_id, summary.end_time);
                             continue;
                         }
                         let page_age = now.signed_duration_since(summary.end_time);
                         if page_age > retention_duration_for_level {
-                            println!("[Retention] L{}/{}: Deleting (end_time: {}, age: {}s > {}s)", level, summary.page_id, summary.end_time, page_age.num_seconds(), retention_duration_for_level.num_seconds());
+                            log::debug!("[Retention] L{}/{}: Deleting (end_time: {}, age: {}s > {}s)", level, summary.page_id, summary.end_time, page_age.num_seconds(), retention_duration_for_level.num_seconds());
                             if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
-                                eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary.page_id, e);
+                                log::error!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary.page_id, e);
                             }
                         } else {
-                             println!("[Retention] L{}/{}: Keeping (end_time: {}, age: {}s <= {}s)", level, summary.page_id, summary.end_time, page_age.num_seconds(), retention_duration_for_level.num_seconds());
+                             log::debug!("[Retention] L{}/{}: Keeping (end_time: {}, age: {}s <= {}s)", level, summary.page_id, summary.end_time, page_age.num_seconds(), retention_duration_for_level.num_seconds());
                         }
                     }
                 }
             }
             RollupRetentionPolicy::KeepNPages(n) => {
                 if *n == 0 { // Special case: KeepNPages(0) means delete all
-                    println!("[Retention] L{}: Policy is KeepNPages(0). Deleting all pages.", level);
+                    log::debug!("[Retention] L{}: Policy is KeepNPages(0). Deleting all pages.", level);
                     let page_summaries = match self.storage.list_finalized_pages_summary(level).await {
                         Ok(summaries) => summaries,
                         Err(e) => {
-                            eprintln!("[Retention] L{}: Error listing for KeepNPages(0): {}. Skipping.", level, e);
+                            log::error!("[Retention] L{}: Error listing for KeepNPages(0): {}. Skipping.", level, e);
                             continue; // Skip to next level
                         }
                     };
                     for summary in page_summaries {
-                        println!("[Retention] L{}/{}: Deleting (KeepNPages(0))", level, summary.page_id);
+                        log::debug!("[Retention] L{}/{}: Deleting (KeepNPages(0))", level, summary.page_id);
                         if let Err(e) = self.storage.delete_page(level, summary.page_id).await {
-                            eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary.page_id, e);
+                            log::error!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary.page_id, e);
                         }
                     }
                     continue; // Skip to next level after processing KeepNPages(0)
                 }
 
                 // Logic for n > 0
-                println!("[Retention] L{}: Policy is KeepNPages({}).", level, n);
+                log::debug!("[Retention] L{}: Policy is KeepNPages({}).", level, n);
                 let mut page_summaries = match self.storage.list_finalized_pages_summary(level).await {
                     Ok(summaries) => summaries,
                     Err(e) => {
-                        eprintln!("[Retention] L{}: Error listing finalized pages for KeepNPages({}): {}. Skipping level.", level, n, e);
+                        log::error!("[Retention] L{}: Error listing finalized pages for KeepNPages({}): {}. Skipping level.", level, n, e);
                         continue; // Skip to next level
                     }
                 };
 
                 if page_summaries.len() <= *n as usize {
-                    println!("[Retention] L{}: Found {} pages, which is <= {}. No pages will be deleted.", level, page_summaries.len(), n);
+                    log::debug!("[Retention] L{}: Found {} pages, which is <= {}. No pages will be deleted.", level, page_summaries.len(), n);
                 } else {
                     // Sort pages by end_time (oldest first) to identify which ones to delete
                     page_summaries.sort_unstable_by_key(|s| s.end_time);
                     
                     let num_to_delete = page_summaries.len() - (*n as usize);
-                    println!("[Retention] L{}: Found {} pages. Deleting {} oldest pages to keep {}.", level, page_summaries.len(), num_to_delete, n);
+                    log::debug!("[Retention] L{}: Found {} pages. Deleting {} oldest pages to keep {}.", level, page_summaries.len(), num_to_delete, n);
 
                     for summary_to_delete in page_summaries.iter().take(num_to_delete) {
-                        println!("[Retention] L{}/{}: Deleting (KeepNPages, end_time: {})", level, summary_to_delete.page_id, summary_to_delete.end_time);
+                        log::debug!("[Retention] L{}/{}: Deleting (KeepNPages, end_time: {})", level, summary_to_delete.page_id, summary_to_delete.end_time);
                         if let Err(e) = self.storage.delete_page(level, summary_to_delete.page_id).await {
-                            eprintln!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary_to_delete.page_id, e);
+                            log::error!("[Retention] L{}/{}: Error deleting page: {}. Continuing.", level, summary_to_delete.page_id, e);
                         }
                     }
                 }
@@ -573,7 +601,7 @@ Ok(original_page_id)
         } // Closes match effective_policy
     } // Closes for (level_idx, level_config)
 
-    println!("[Retention] Per-level policies application complete.");
+    log::debug!("[Retention] Per-level policies application complete.");
     Ok(())
     } // Closes async fn apply_retention_policies
 
@@ -595,12 +623,12 @@ Ok(original_page_id)
     /// # Errors
     /// Returns `CJError` if the rollup operation fails at any point
     async fn perform_rollup(&self, finalized_page_level: u8, finalized_page_hash: [u8; 32], original_trigger_timestamp: DateTime<Utc>) -> Result<(), CJError> {
-        println!("[ROLLUP-DEBUG] ENTER perform_rollup: level={}, hash={:.8}, trigger_ts={}", 
+        log::debug!("[ROLLUP-DEBUG] ENTER perform_rollup: level={}, hash={:.8}, trigger_ts={}",
             finalized_page_level, 
             finalized_page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(), 
             original_trigger_timestamp);
         let parent_level_idx = finalized_page_level + 1;
-        println!("[ROLLUP-DEBUG] Attempting rollup from L{} to L{}", finalized_page_level, parent_level_idx);
+        log::debug!("[ROLLUP-DEBUG] Attempting rollup from L{} to L{}", finalized_page_level, parent_level_idx);
 
         // Check if the parent level exists in the configuration
         // Load the finalized child page from storage to access its content/details
@@ -609,7 +637,7 @@ Ok(original_page_id)
         None => {
             // This case should ideally not happen if page_hash is valid and from a stored page.
             // However, if it does, we might log an error and stop the rollup for this path.
-            eprintln!("perform_rollup: Failed to load child page with hash {:?}. Stopping rollup for this branch.", finalized_page_hash);
+            log::error!("perform_rollup: Failed to load child page with hash {:?}. Stopping rollup for this branch.", finalized_page_hash);
             // Consider returning a specific error or just Ok(()) if this is a recoverable scenario for the system.
             return Err(CJError::StorageError(format!("Failed to load child page with hash {:?} for rollup", finalized_page_hash)));
         }
@@ -619,11 +647,11 @@ Ok(original_page_id)
         Some(config) => config,
         None => {
             // Finalized page was at the highest configured level, so no further rollup.
-            println!("[ROLLUP-DEBUG] No parent level L{} configured, stopping rollup cascade", parent_level_idx);
+            log::debug!("[ROLLUP-DEBUG] No parent level L{} configured, stopping rollup cascade", parent_level_idx);
             return Ok(());
         }
     };
-    println!("[ROLLUP-DEBUG] Found parent level L{} config with max_items={}, max_age={}s",
+    log::debug!("[ROLLUP-DEBUG] Found parent level L{} config with max_items={}, max_age={}s",
         parent_level_idx,
         parent_level_config.rollup_config.max_items_per_page,
         parent_level_config.rollup_config.max_page_age_seconds);
@@ -633,7 +661,7 @@ Ok(original_page_id)
         let mut active_pages_guard = self.active_pages.lock().await;
         if let Some(existing_parent) = active_pages_guard.get(&parent_level_idx).cloned() {
             if original_trigger_timestamp >= existing_parent.end_time {
-                println!("[ROLLUP] Finalizing stale parent page L{}P{} before creating new one", existing_parent.level, existing_parent.page_id);
+                log::debug!("[ROLLUP] Finalizing stale parent page L{}P{} before creating new one", existing_parent.level, existing_parent.page_id);
                 active_pages_guard.remove(&parent_level_idx);
                 drop(active_pages_guard);
                 let mut page_to_store = existing_parent.clone();
@@ -650,15 +678,15 @@ Ok(original_page_id)
     }
 
 
-        println!("[ROLLUP-DEBUG] PRE_CALL get_or_create_active_parent_page for L{}", parent_level_idx);
+        log::debug!("[ROLLUP-DEBUG] PRE_CALL get_or_create_active_parent_page for L{}", parent_level_idx);
     let mut parent_page = self.get_or_create_active_parent_page(parent_level_idx, original_trigger_timestamp).await?;
-    println!("[ROLLUP-DEBUG] POST_CALL get_or_create_active_parent_page for L{}. Got page L{}P{}", parent_level_idx, parent_page.level, parent_page.page_id);
-        println!("[ROLLUP-DEBUG] Got parent page L{}P{} with {} existing items", parent_level_idx, parent_page.page_id, parent_page.content_len());
+    log::debug!("[ROLLUP-DEBUG] POST_CALL get_or_create_active_parent_page for L{}. Got page L{}P{}", parent_level_idx, parent_page.level, parent_page.page_id);
+        log::debug!("[ROLLUP-DEBUG] Got parent page L{}P{} with {} existing items", parent_level_idx, parent_page.page_id, parent_page.content_len());
 
     // The timestamp to associate with the child's content in the parent page.
     // This should be the end_time of the child page, as per ROLLUP.md.
     let child_level_config = &self.config.time_hierarchy.levels[loaded_child_page.level as usize];
-    println!("[ROLLUP_CHILD_END_TIME_DBG] Child L{}P{} (creation_ts: {}), child_level_config.duration_seconds = {}, page.end_time_field = {}",
+    log::debug!("[ROLLUP_CHILD_END_TIME_DBG] Child L{}P{} (creation_ts: {}), child_level_config.duration_seconds = {}, page.end_time_field = {}",
         loaded_child_page.level,
         loaded_child_page.page_id,
         loaded_child_page.creation_timestamp,
@@ -693,7 +721,7 @@ Ok(original_page_id)
                             object_id_patches.insert(field_name.clone(), field_value.clone());
                         }
                     } else {
-                        eprintln!(
+                        log::warn!(
                             "[Rollup] Warning: Leaf {} in L0 page {} (Hash: {:.8}) has non-object delta_payload ({:?}) when rolling up to NetPatches. Skipping this leaf for NetPatch generation.",
                             leaf.leaf_id, loaded_child_page.page_id, loaded_child_page.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(), leaf.delta_payload
                         );
@@ -705,9 +733,9 @@ Ok(original_page_id)
                 } else {
                     // It's okay if no patches are generated, e.g., if all leaves had non-object payloads
                     // or the child page was empty of leaves to begin with (though an empty L0 page might be discarded earlier).
-                    println!(
+                    log::debug!(
                         "[Rollup] Info: No NetPatches generated from L0 page {} (Hash: {:.8}) for parent L1 page {} (Hash: {:.8}). Child page might have had no suitable leaves or was empty.",
-                        loaded_child_page.page_id, loaded_child_page.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(), 
+                        loaded_child_page.page_id, loaded_child_page.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
                         parent_page.page_id, parent_page.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()
                     );
                 }
@@ -715,14 +743,14 @@ Ok(original_page_id)
                 PageContent::ThrallHashes(_) => {
                     // Rolling up a ChildHashes page into a NetPatches page is problematic.
                     // This implies a misconfiguration or an unsupported rollup path.
-                    eprintln!("Error: Cannot roll up PageContent::ThrallHashes into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
+                    log::error!("Error: Cannot roll up PageContent::ThrallHashes into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
                     // Potentially return an error or skip adding content.
 
                 }
                 PageContent::Snapshot(_) => {
                     // Rolling up a Snapshot page into a NetPatches parent page is currently unsupported.
                     // Snapshots represent a full state and are not typically rolled up as deltas.
-                    eprintln!("[Rollup] Error: Cannot roll up PageContent::Snapshot into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
+                    log::error!("[Rollup] Error: Cannot roll up PageContent::Snapshot into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
                     // Consider this an error or skip adding content.
                 }
             }
@@ -732,16 +760,16 @@ Ok(original_page_id)
     let mut active_pages_guard = self.active_pages.lock().await;
         // Determine if this parent page itself needs to be finalized.
     let max_items_parent = parent_level_config.rollup_config.max_items_per_page;
-    println!("[ROLLUP_DBG_AGE_SETUP_PRE_OLDEST] L{}P{}: parent_page.first_child_ts = {:?}, parent_page.creation_timestamp = {}", parent_page.level, parent_page.page_id, parent_page.first_child_ts, parent_page.creation_timestamp);
+    log::debug!("[ROLLUP_DBG_AGE_SETUP_PRE_OLDEST] L{}P{}: parent_page.first_child_ts = {:?}, parent_page.creation_timestamp = {}", parent_page.level, parent_page.page_id, parent_page.first_child_ts, parent_page.creation_timestamp);
     let oldest_content_ts_in_parent = parent_page.first_child_ts.unwrap_or(parent_page.creation_timestamp);
     // Age is based on page creation time to ensure consistent finalization
     let parent_page_age_seconds = (original_trigger_timestamp - parent_page.creation_timestamp).num_seconds();
-    println!("[ROLLUP_DBG_AGE_SETUP] L{}P{}: original_trigger_timestamp = {}, oldest_content_ts_in_parent = {}, calculated parent_page_age_seconds = {}", parent_page.level, parent_page.page_id, original_trigger_timestamp, oldest_content_ts_in_parent, parent_page_age_seconds);
+    log::debug!("[ROLLUP_DBG_AGE_SETUP] L{}P{}: original_trigger_timestamp = {}, oldest_content_ts_in_parent = {}, calculated parent_page_age_seconds = {}", parent_page.level, parent_page.page_id, original_trigger_timestamp, oldest_content_ts_in_parent, parent_page_age_seconds);
     let max_age_parent_seconds = parent_level_config.rollup_config.max_page_age_seconds;
 
-    println!("[ROLLUP_DBG_FULL] Checking parent_is_full for L{}P{}: parent_page.content_len() = {}, max_items_parent = {}", parent_page.level, parent_page.page_id, parent_page.content_len(), max_items_parent);
+    log::debug!("[ROLLUP_DBG_FULL] Checking parent_is_full for L{}P{}: parent_page.content_len() = {}, max_items_parent = {}", parent_page.level, parent_page.page_id, parent_page.content_len(), max_items_parent);
     let is_full_by_items = parent_page.content_len() >= max_items_parent;
-    println!("[ROLLUP_DBG_AGE_CALC] Checking parent_is_over_age for L{}P{}: parent_page_age_seconds = {}, max_age_parent_seconds = {}, comparison_result = {}", parent_page.level, parent_page.page_id, parent_page_age_seconds, max_age_parent_seconds, parent_page_age_seconds >= max_age_parent_seconds as i64);
+    log::debug!("[ROLLUP_DBG_AGE_CALC] Checking parent_is_over_age for L{}P{}: parent_page_age_seconds = {}, max_age_parent_seconds = {}, comparison_result = {}", parent_page.level, parent_page.page_id, parent_page_age_seconds, max_age_parent_seconds, parent_page_age_seconds >= max_age_parent_seconds as i64);
     let is_over_age = parent_page_age_seconds >= max_age_parent_seconds as i64;
 
     // A page should be considered for finalization if it's full or over age.
@@ -751,7 +779,7 @@ Ok(original_page_id)
     if parent_page.is_content_empty() {
         if is_over_age {
             // EMPTY PAGE DISCARD LOGIC: Page is empty AND over age.
-            println!("[Rollup] Discarding empty page L{}/{} due to age. Original trigger: {:?}, Page creation: {:?}, First child_ts: {:?}", 
+            log::debug!("[Rollup] Discarding empty page L{}/{} due to age. Original trigger: {:?}, Page creation: {:?}, First child_ts: {:?}",
                 parent_level_idx, parent_page.page_id, original_trigger_timestamp, parent_page.creation_timestamp, parent_page.first_child_ts);
             active_pages_guard.remove(&parent_level_idx);
             // Do not store, do not update last_finalized_*, do not recurse.
@@ -762,7 +790,7 @@ Ok(original_page_id)
             // This can happen if a child page caused a parent to be created, but the child's content
             // didn't actually populate the parent (e.g. L0 leaves -> NetPatches, but all leaves were unsuitable).
             // The parent is empty but not old enough to discard.
-            println!("[Rollup] Keeping empty page L{}/{} active (not over age). Original trigger: {:?}", 
+            log::debug!("[Rollup] Keeping empty page L{}/{} active (not over age). Original trigger: {:?}",
                 parent_level_idx, parent_page.page_id, original_trigger_timestamp);
             active_pages_guard.insert(parent_level_idx, parent_page.clone());
             drop(active_pages_guard); // Release lock as this branch is done with active_pages
@@ -770,7 +798,7 @@ Ok(original_page_id)
     } else { // Page is NOT empty
         if is_full_by_items || is_over_age {
             // NORMAL FINALIZATION (not empty, AND (full or over age)):
-            println!(
+            log::debug!(
                 "[Rollup] Finalizing non-empty page L{}/{} (Full: {}, OverAge: {}). Original trigger: {:?}",
                 parent_level_idx,
                 parent_page.page_id,
@@ -780,26 +808,26 @@ Ok(original_page_id)
             );
             let parent_page_to_store = parent_page.clone();
 
-            println!(
+            log::debug!(
                 "[ROLLUP-DEBUG] Removing L{}P{} from active_pages before cascade",
                 parent_level_idx,
                 parent_page_to_store.page_id
             );
             active_pages_guard.remove(&parent_level_idx); // Remove from active as it's now finalized
-            println!(
+            log::debug!(
                 "[ROLLUP-DEBUG] L{}P{} removed from active_pages successfully (under lock).",
                 parent_level_idx,
                 parent_page_to_store.page_id
             );
             drop(active_pages_guard); // Release lock before awaiting storage
 
-            println!(
+            log::debug!(
                 "[ROLLUP-DEBUG] STORING PAGE L{}P{} to storage",
                 parent_level_idx,
                 parent_page_to_store.page_id
             );
             self.storage.store_page(&parent_page_to_store).await?;
-            println!(
+            log::debug!(
                 "[ROLLUP-DEBUG] Page L{}P{} stored successfully",
                 parent_level_idx,
                 parent_page_to_store.page_id
@@ -816,7 +844,7 @@ Ok(original_page_id)
                 .await
                 .insert(parent_level_idx, parent_page_to_store.page_hash);
 
-            println!(
+            log::debug!(
                 "[ROLLUP-DEBUG] Starting recursive rollup call to L{} with parent hash {:.8}",
                 parent_level_idx + 1,
                 parent_page_to_store
@@ -833,19 +861,19 @@ Ok(original_page_id)
                 )
             )
             .await?;
-            println!("[ROLLUP-DEBUG] Returned from recursive rollup call to L{}", parent_level_idx + 1);
+            log::debug!("[ROLLUP-DEBUG] Returned from recursive rollup call to L{}", parent_level_idx + 1);
         } else {
             // Page is NOT empty, NOT full, and NOT over age. Keep it active.
-            println!("[Rollup] Keeping non-empty page L{}/{} active (not full, not over age). Original trigger: {:?}", 
+            log::debug!("[Rollup] Keeping non-empty page L{}/{} active (not full, not over age). Original trigger: {:?}",
                 parent_level_idx, parent_page.page_id, original_trigger_timestamp);
             active_pages_guard.insert(parent_level_idx, parent_page.clone());
-            println!("[ROLLUP-DEBUG] Inserted/Updated L{}P{} in active_pages (under lock).", parent_level_idx, parent_page.page_id);
+            log::debug!("[ROLLUP-DEBUG] Inserted/Updated L{}P{} in active_pages (under lock).", parent_level_idx, parent_page.page_id);
             drop(active_pages_guard); // Release lock as this branch is done with active_pages
         }
     }
 
-    println!("[ROLLUP-DEBUG] EXIT perform_rollup: level={}, hash={:.8}", 
-        finalized_page_level, 
+    log::debug!("[ROLLUP-DEBUG] EXIT perform_rollup: level={}, hash={:.8}",
+        finalized_page_level,
         finalized_page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>());
     Ok(())
 }
@@ -854,14 +882,14 @@ Ok(original_page_id)
     /// Assumes the page has already been removed from active_pages if it was there.
     async fn finalize_and_rollup_page(&self, mut page_to_finalize: JournalPage, trigger_timestamp: DateTime<Utc>) -> Result<(), CJError> {
         if page_to_finalize.is_content_empty() {
-            println!("[FINALIZE_HELPER] Page L{}P{} is empty. Discarding without storage or rollup.", page_to_finalize.level, page_to_finalize.page_id);
+            log::debug!("[FINALIZE_HELPER] Page L{}P{} is empty. Discarding without storage or rollup.", page_to_finalize.level, page_to_finalize.page_id);
             // An empty page that was active and became unsuitable (e.g. aged out while empty)
             // is simply removed from active_pages by the caller and not processed further here.
             return Ok(());
         }
 
         page_to_finalize.recalculate_merkle_root_and_page_hash();
-        println!("[FINALIZE_HELPER] Finalizing L{}P{} (Hash: {:.8}) due to being unsuitable for next leaf/item. Trigger ts: {}",
+        log::debug!("[FINALIZE_HELPER] Finalizing L{}P{} (Hash: {:.8}) due to being unsuitable for next leaf/item. Trigger ts: {}",
                  page_to_finalize.level, page_to_finalize.page_id,
                  page_to_finalize.page_hash.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
                  trigger_timestamp);
@@ -870,7 +898,7 @@ Ok(original_page_id)
         self.last_finalized_page_ids.lock().await.insert(page_to_finalize.level, page_to_finalize.page_id);
         self.last_finalized_page_hashes.lock().await.insert(page_to_finalize.level, page_to_finalize.page_hash);
 
-        println!("[FINALIZE_HELPER] L{}P{} stored. Triggering rollup.", page_to_finalize.level, page_to_finalize.page_id);
+        log::debug!("[FINALIZE_HELPER] L{}P{} stored. Triggering rollup.", page_to_finalize.level, page_to_finalize.page_id);
         self.perform_rollup(page_to_finalize.level, page_to_finalize.page_hash, trigger_timestamp).await?;
         Ok(())
     }

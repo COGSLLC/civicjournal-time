@@ -13,6 +13,7 @@ use crate::core::time_manager::TimeHierarchyManager;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use log;
 
 /// The main query engine for executing complex queries against the journal.
 ///
@@ -50,6 +51,21 @@ impl QueryEngine {
             time_manager,
             _config: config,
         }
+    }
+
+    /// Returns a clone of the underlying storage backend.
+    pub fn storage(&self) -> Arc<dyn StorageBackend> {
+        Arc::clone(&self.storage)
+    }
+
+    /// Returns a clone of the underlying time manager.
+    pub fn time_manager(&self) -> Arc<TimeHierarchyManager> {
+        Arc::clone(&self.time_manager)
+    }
+
+    /// Returns a clone of the configuration used by the query engine.
+    pub fn config(&self) -> Arc<Config> {
+        Arc::clone(&self._config)
     }
 
     /// Generates an inclusion proof for a specific leaf in the journal.
@@ -137,7 +153,7 @@ pub async fn get_leaf_inclusion_proof_with_hint(
                         }
                         crate::core::page::PageContent::NetPatches(_net_patches_content) => {
                             // L0 pages should ideally only contain Leaves. NetPatches here is unexpected.
-                            eprintln!(
+                            log::warn!(
                                 "[QueryEngine] Warning: Encountered PageContent::NetPatches in L0 page (ID: {}) during find_leaf_proof. This is unexpected for L0.",
                                 page.page_id
                             );
@@ -150,7 +166,7 @@ pub async fn get_leaf_inclusion_proof_with_hint(
                             // If we encounter a snapshot page while searching for a specific leaf proof,
                             // it means the leaf is not in this specific page in a granular form.
                             // found_leaf_in_page_contents will remain false.
-                            eprintln!(
+                            log::info!(
                                 "[QueryEngine] Info: Encountered PageContent::Snapshot in page (ID: {}) during find_leaf_proof. This is not where individual leaves are proven from.",
                                 page.page_id
                             );
@@ -184,15 +200,15 @@ pub async fn get_leaf_inclusion_proof_with_hint(
                                 page_merkle_root: page.merkle_root,
                             });
                         } else {
-                            eprintln!("Failed to generate Merkle proof for a found leaf. Page ID: {}, Leaf Index: {}", page.page_id, leaf_idx);
+                            log::error!("Failed to generate Merkle proof for a found leaf. Page ID: {}, Leaf Index: {}", page.page_id, leaf_idx);
                         }
                     }
                 }
                 Ok(None) => {
-                     eprintln!("Page not found in storage: ID {}, Level 0", page_id);
+                     log::error!("Page not found in storage: ID {}, Level 0", page_id);
                 }
                 Err(e) => {
-                    eprintln!("Failed to load page {}: {:?}", page_id, e);
+                    log::error!("Failed to load page {}: {:?}", page_id, e);
                 }
             }
         }
@@ -277,22 +293,32 @@ pub async fn get_leaf_inclusion_proof_with_hint(
     ) -> Result<DeltaReport, QueryError> {
         if from > to { return Err(QueryError::InvalidParameters("from is after to".into())); }
         let mut pages = self.storage.list_finalized_pages_summary(0).await?;
-        if let Some(active) = self.time_manager.get_current_active_page_id(0).await {
-            if let Ok(Some(p)) = self.storage.load_page(0, active).await {
-                pages.push(crate::core::page::JournalPageSummary {
-                    page_id: p.page_id,
-                    level: p.level,
-                    creation_timestamp: p.creation_timestamp,
-                    end_time: p.end_time,
-                    page_hash: p.page_hash,
-                });
-            }
+        if let Some(active) = self.time_manager.get_active_page(0).await {
+            pages.push(crate::core::page::JournalPageSummary {
+                page_id: active.page_id,
+                level: active.level,
+                creation_timestamp: active.creation_timestamp,
+                end_time: active.end_time,
+                page_hash: active.page_hash,
+            });
         }
         pages.sort_by_key(|p| p.creation_timestamp);
         let mut deltas = Vec::new();
+        let active_page_opt = self.time_manager.get_active_page(0).await;
         for summary in pages {
             if summary.end_time < from || summary.creation_timestamp > to { continue; }
-            if let Ok(Some(page)) = self.storage.load_page(summary.level, summary.page_id).await {
+            let page_opt = match self.storage.load_page(summary.level, summary.page_id).await {
+                Ok(Some(page)) => Some(page),
+                Ok(None) => {
+                    if let Some(active) = &active_page_opt {
+                        if active.page_id == summary.page_id && active.level == summary.level {
+                            Some(active.clone())
+                        } else { None }
+                    } else { None }
+                },
+                Err(_) => None,
+            };
+            if let Some(page) = page_opt {
                 if let crate::core::page::PageContent::Leaves(leaves) = page.content {
                     for leaf in leaves {
                         if leaf.timestamp < from { continue; }
@@ -334,27 +360,37 @@ pub async fn get_leaf_inclusion_proof_with_hint(
         }
 
         let mut pages = self.storage.list_finalized_pages_summary(0).await?;
-        if let Some(active) = self.time_manager.get_current_active_page_id(0).await {
-            if let Ok(Some(p)) = self.storage.load_page(0, active).await {
-                pages.push(crate::core::page::JournalPageSummary {
-                    page_id: p.page_id,
-                    level: p.level,
-                    creation_timestamp: p.creation_timestamp,
-                    end_time: p.end_time,
-                    page_hash: p.page_hash,
-                });
-            }
+        if let Some(active) = self.time_manager.get_active_page(0).await {
+            pages.push(crate::core::page::JournalPageSummary {
+                page_id: active.page_id,
+                level: active.level,
+                creation_timestamp: active.creation_timestamp,
+                end_time: active.end_time,
+                page_hash: active.page_hash,
+            });
         }
         pages.sort_by_key(|p| p.creation_timestamp);
 
         let mut deltas = Vec::new();
         let mut seen_any = false;
         let mut skipped = 0usize;
+        let active_page_opt = self.time_manager.get_active_page(0).await;
         for summary in pages {
             if summary.end_time < from || summary.creation_timestamp > to {
                 continue;
             }
-            if let Ok(Some(page)) = self.storage.load_page(summary.level, summary.page_id).await {
+            let page_opt = match self.storage.load_page(summary.level, summary.page_id).await {
+                Ok(Some(page)) => Some(page),
+                Ok(None) => {
+                    if let Some(active) = &active_page_opt {
+                        if active.page_id == summary.page_id && active.level == summary.level {
+                            Some(active.clone())
+                        } else { None }
+                    } else { None }
+                },
+                Err(_) => None,
+            };
+            if let Some(page) = page_opt {
                 if let crate::core::page::PageContent::Leaves(leaves) = page.content {
                     for leaf in leaves {
                         if leaf.timestamp < from {
@@ -406,16 +442,14 @@ pub async fn get_leaf_inclusion_proof_with_hint(
     ) -> Result<Vec<PageIntegrityReport>, QueryError> {
         if let (Some(f), Some(t)) = (from, to) { if f > t { return Err(QueryError::InvalidParameters("from > to".into())); } }
         let mut pages = self.storage.list_finalized_pages_summary(level).await?;
-        if let Some(active) = self.time_manager.get_current_active_page_id(level).await {
-            if let Ok(Some(p)) = self.storage.load_page(level, active).await {
-                pages.push(crate::core::page::JournalPageSummary {
-                    page_id: p.page_id,
-                    level: p.level,
-                    creation_timestamp: p.creation_timestamp,
-                    end_time: p.end_time,
-                    page_hash: p.page_hash,
-                });
-            }
+        if let Some(active) = self.time_manager.get_active_page(level).await {
+            pages.push(crate::core::page::JournalPageSummary {
+                page_id: active.page_id,
+                level: active.level,
+                creation_timestamp: active.creation_timestamp,
+                end_time: active.end_time,
+                page_hash: active.page_hash,
+            });
         }
         pages.sort_by_key(|p| p.page_id);
         let mut reports = Vec::new();
@@ -423,23 +457,41 @@ pub async fn get_leaf_inclusion_proof_with_hint(
         for summary in pages {
             if let Some(f) = from { if summary.page_id < f { continue; } }
             if let Some(t) = to { if summary.page_id > t { continue; } }
-            match self.storage.load_page(level, summary.page_id).await {
-                Ok(Some(mut page)) => {
-                    let mut issues = Vec::new();
-                    let orig_hash = page.page_hash;
-                    let orig_root = page.merkle_root;
-                    page.recalculate_merkle_root_and_page_hash();
-                    if page.merkle_root != orig_root { issues.push("merkle_root mismatch".into()); }
-                    if page.page_hash != orig_hash { issues.push("page_hash mismatch".into()); }
-                    if let Some(prev) = prev_hash { if page.prev_page_hash != Some(prev) { issues.push("prev_page_hash mismatch".into()); } }
-                    prev_hash = Some(orig_hash);
-                    reports.push(PageIntegrityReport { page_id: summary.page_id, level, is_valid: issues.is_empty(), issues });
-                }
+            let page_result = self.storage.load_page(level, summary.page_id).await;
+            let (page_option, from_storage) = match page_result {
+                Ok(Some(p)) => (Some(p), true),
                 Ok(None) => {
+                    self
+                        .time_manager
+                        .get_active_page_by_id(level, summary.page_id)
+                        .await
+                        .map(|p| (Some(p), false))
+                        .unwrap_or((None, false))
+                }
+                Err(e) => return Err(QueryError::CoreError(e)),
+            };
+            match page_option {
+                Some(mut page) => {
+                    if from_storage {
+                        let mut issues = Vec::new();
+                        let orig_hash = page.page_hash;
+                        let orig_root = page.merkle_root;
+                        page.recalculate_merkle_root_and_page_hash();
+                        if page.merkle_root != orig_root { issues.push("merkle_root mismatch".into()); }
+                        if page.page_hash != orig_hash { issues.push("page_hash mismatch".into()); }
+                        if let Some(prev) = prev_hash { if page.prev_page_hash != Some(prev) { issues.push("prev_page_hash mismatch".into()); } }
+                        prev_hash = Some(orig_hash);
+                        reports.push(PageIntegrityReport { page_id: summary.page_id, level, is_valid: issues.is_empty(), issues });
+                    } else {
+                        // Active page: assume valid since it may change until finalized
+                        prev_hash = Some(page.page_hash);
+                        reports.push(PageIntegrityReport { page_id: summary.page_id, level, is_valid: true, issues: Vec::new() });
+                    }
+                }
+                None => {
                     reports.push(PageIntegrityReport { page_id: summary.page_id, level, is_valid: false, issues: vec!["page missing".into()] });
                     prev_hash = None;
                 }
-                Err(e) => return Err(QueryError::CoreError(e)),
             }
         }
         Ok(reports)

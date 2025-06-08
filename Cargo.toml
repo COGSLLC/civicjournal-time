@@ -60,6 +60,10 @@ dashmap = { version = "5.5.3", optional = true } # For MemoryStorage
 zip = "0.6" # For creating zip archives (backup)
 walkdir = "2" # For directory traversal
 uuid = { version = "1", features = ["v4", "serde"] } # For generating unique IDs
+tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_json-1"] }
+clap = { version = "4.4", features = ["derive"], optional = true }
+rand = { version = "0.8", optional = true }
+fake = { version = "2.7", features = ["derive", "chrono"], optional = true }
 
 [dev-dependencies]
 lazy_static = "1.4.0"
@@ -99,6 +103,14 @@ crypto = ["ring"]
 
 # Concurrency
 concurrent = ["parking_lot"]
+
+# Demo mode utilities and PostgreSQL driver
+demo = ["async", "async_api", "logging", "dep:tokio-postgres", "dep:clap", "dep:fake", "dep:rand"]
+
+[[bin]]
+name = "journal-demo"
+path = "src/bin/journal-demo.rs"
+required-features = ["demo"]
 
 [[bench]]
 name = "critical_paths"

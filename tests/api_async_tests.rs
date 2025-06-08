@@ -140,6 +140,7 @@ async fn test_get_page_existing() {
     let journal = Journal::new(cfg).await.expect("init");
     let ts = Utc::now();
     journal.append_leaf(ts, None, "p1".into(), json!({"v":1})).await.unwrap();
+    journal.apply_retention_policies().await.unwrap();
     let page = journal.get_page(0, 0).await.expect("page");
     assert_eq!(page.level, 0);
     assert_eq!(page.page_id, 0);
@@ -156,6 +157,7 @@ async fn test_async_query_methods() {
     let h1 = match journal.append_leaf(base, None, "c1".into(), json!({"a":1})).await.unwrap() { PageContentHash::LeafHash(h) => h, _ => panic!() };
     let h2 = match journal.append_leaf(base + Duration::seconds(1), Some(PageContentHash::LeafHash(h1)), "c1".into(), json!({"b":2})).await.unwrap() { PageContentHash::LeafHash(h) => h, _ => panic!() };
     let _h3 = journal.append_leaf(base + Duration::seconds(2), Some(PageContentHash::LeafHash(h2)), "c1".into(), json!({"c":3})).await.unwrap();
+    journal.apply_retention_policies().await.unwrap();
 
     let proof = journal.get_leaf_inclusion_proof(&h2).await.unwrap();
     assert_eq!(proof.leaf.leaf_hash, h2);
@@ -166,7 +168,8 @@ async fn test_async_query_methods() {
     let report = journal.get_delta_report("c1", base, base + Duration::seconds(3)).await.unwrap();
     assert_eq!(report.deltas.len(), 3);
 
-    let integrity = journal.get_page_chain_integrity(0, Some(0), Some(1)).await.unwrap();
+    let integrity = journal.get_page_chain_integrity(0, Some(0), Some(2)).await.unwrap();
     assert_eq!(integrity.len(), 2);
+    println!("integrity: {:?}", integrity);
     assert!(integrity.iter().all(|r| r.is_valid));
 }
