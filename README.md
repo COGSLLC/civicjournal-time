@@ -446,7 +446,7 @@ Use the optional `demo` feature to generate sample data and explore rollups and 
 cargo run --features demo --bin journal-demo -- run --mode batch
 ```
 
-See [DEMOMODE.md](DEMOMODE.md) for full configuration and PostgreSQL setup instructions.
+If no database URL is provided, the demo automatically launches a local PostgreSQL instance using Docker or an embedded server. See [DEMOMODE.md](DEMOMODE.md) for full configuration and PostgreSQL setup instructions.
 
 ## WebAssembly Bindings
 

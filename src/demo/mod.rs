@@ -19,6 +19,8 @@ pub mod snapshot;
 pub mod explorer;
 #[cfg(feature = "demo")]
 pub mod postgres;
+#[cfg(feature = "demo")]
+pub mod auto_db;
 
 #[cfg(feature = "demo")]
 pub use config::DemoConfig;
