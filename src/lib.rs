@@ -57,26 +57,23 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 /// Returns an error if the configuration file exists but can't be parsed, or if logging
 /// initialization fails.
 pub fn init(config_path: Option<&str>) -> CJResult<&'static Config> {
-    // Initialize logging first with minimal configuration
-    init_logging(None)?;
-
-    // Load configuration
+    // Load configuration without logging initialized yet
     let config_path = config_path.unwrap_or("config.toml");
     let config = match Config::load(config_path) {
         Ok(config) => config,
         Err(e) => {
-            log::warn!("Failed to load config from {}: {}", config_path, e);
-            log::info!("Using default configuration");
+            eprintln!("Failed to load config from {}: {}", config_path, e);
+            eprintln!("Using default configuration");
             let mut config = Config::default();
             // Apply environment variables to the default config
             if let Err(e) = config.apply_env_vars() {
-                log::warn!("Failed to apply environment variables: {}", e);
+                eprintln!("Failed to apply environment variables: {}", e);
             }
             config
         }
     };
 
-    // Re-initialize logging with the loaded configuration
+    // Initialize logging with the loaded configuration
     init_logging(Some(&config.logging.level))?;
 
     // Store the configuration in the global state

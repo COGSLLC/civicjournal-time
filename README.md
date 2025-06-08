@@ -1,11 +1,11 @@
-⚠️ **ALPHA (v0.3.0)** — Core rollup, turnstile, and query features are stable. Production-ready for basic use cases.
+⚠️ **BETA (v0.4.0)** — Core rollup, turnstile, snapshot, and query features are stable. Production-ready for typical use cases.
 # CivicJournal-Time
 
 **An append-only, verifiable ledger for robust audit trails and time-series data management.**
 
 CivicJournal-Time is a Rust-based system designed to create immutable, chronologically-ordered logs of events or data changes. It's particularly well-suited for tracking the history of external systems, providing a secure and verifiable audit trail that allows for state reconstruction, data integrity verification, and detailed auditing.
 
-⚠︎ ALPHA (v0.3.0) — Full hierarchical rollups and retention policies implemented, Query Engine operational.
+⚠︎ **BETA (v0.4.0)** — Full hierarchical rollups, snapshots, and query engine operational.
 
 ## Core Concepts
 
@@ -219,7 +219,7 @@ src/
    # Run tests
    cargo test
    
-   # Run benchmarks (if available)
+   # Run benchmarks
    cargo bench
    ```
 
@@ -419,6 +419,16 @@ The rest of the file contains the (potentially) compressed and serialized `Journ
 ## Backup and Restore
 
 The `FileStorage` backend provides methods for backing up the entire journal to a zip archive and restoring from it. A `backup_manifest.json` file is generated during backup, containing metadata about the backup process and the files included.
+
+## Demo Mode
+
+Use the optional `demo` feature to generate sample data and explore rollups and snapshots. Build and run the simulator with:
+
+```bash
+cargo run --features demo --bin journal-demo -- run --mode batch
+```
+
+See [DEMOMODE.md](DEMOMODE.md) for full configuration and PostgreSQL setup instructions.
 
 ## Further Documentation
 

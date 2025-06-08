@@ -1,7 +1,7 @@
 # CivicJournal-Time Deployment Guide
 
-**Version**: 0.3.0  
-**Last Updated**: 2025-06-05
+**Version**: 0.4.0
+**Last Updated**: 2025-06-08
 
 ## Table of Contents
 
@@ -20,6 +20,7 @@
 ## System Requirements
 
 ### Minimum Requirements
+Validated with Demo Mode and benchmark runs:
 - **CPU**: 2 cores (4+ recommended for production)
 - **RAM**: 4GB (8GB+ recommended for production)
 - **Storage**: SSD strongly recommended
@@ -43,8 +44,8 @@
 
 2. Extract the archive:
    ```bash
-   tar -xzf civicjournal-time-x86_64-linux-0.3.0.tar.gz
-   cd civicjournal-time-0.3.0/
+   tar -xzf civicjournal-time-x86_64-linux-0.4.0.tar.gz
+   cd civicjournal-time-0.4.0/
    ```
 
 3. Make the binary executable:
@@ -55,7 +56,7 @@
 ### Cargo Install
 
 ```bash
-cargo install --git https://github.com/COGSLLC/civicjournal-time.git --tag v0.3.0
+cargo install --git https://github.com/COGSLLC/civicjournal-time.git --tag v0.4.0
 ```
 
 ## Configuration
@@ -130,7 +131,7 @@ civicjournal-time
    ```bash
    git clone https://github.com/COGSLLC/civicjournal-time.git
    cd civicjournal-time
-   git checkout v0.3.0  # or the desired version
+   git checkout v0.4.0  # or the desired version
    ```
 
 2. Build in release mode:
@@ -150,7 +151,7 @@ docker run -d \
   -p 8080:8080 \
   -v /path/to/config.toml:/etc/civicjournal/config.toml \
   -v /path/to/data:/data \
-  ghcr.io/cogsllc/civicjournal-time:0.3.0
+  ghcr.io/cogsllc/civicjournal-time:0.4.0
 ```
 
 ### Docker Compose
@@ -162,7 +163,7 @@ version: '3.8'
 
 services:
   civicjournal:
-    image: ghcr.io/cogsllc/civicjournal-time:0.3.0
+    image: ghcr.io/cogsllc/civicjournal-time:0.4.0
     container_name: civicjournal
     restart: unless-stopped
     ports:
@@ -216,7 +217,7 @@ replicaCount: 3
 
 image:
   repository: ghcr.io/cogsllc/civicjournal-time
-  tag: 0.3.0
+  tag: 0.4.0
   pullPolicy: IfNotPresent
 
 service:
@@ -340,7 +341,7 @@ GET /readyz
 # Response format
 {
   "status": "ok",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "uptime_seconds": 12345.67,
   "storage_usage_bytes": 1073741824,
   "pages_by_level": {"0": 42, "1": 7, "2": 1}
@@ -417,7 +418,7 @@ iotop -oP
 
 ## Upgrading
 
-### Version 0.2.x to 0.3.0
+### Version 0.3.x to 0.4.0
 
 1. Backup your data
 2. Stop the service
