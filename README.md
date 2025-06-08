@@ -455,6 +455,7 @@ at runtime. Should both methods fail you'll be prompted to install PostgreSQL or
 provide `database_url` manually. See [DEMOMODE.md](DEMOMODE.md) for full
 configuration and PostgreSQL setup instructions.
 
+
 ## WebAssembly Bindings
 
 The crate exposes a `WasmJournal` type for WebAssembly environments when built
