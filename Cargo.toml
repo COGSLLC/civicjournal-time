@@ -64,6 +64,8 @@ tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_jso
 clap = { version = "4.4", features = ["derive"], optional = true }
 rand = { version = "0.8", optional = true }
 fake = { version = "2.7", features = ["derive", "chrono"], optional = true }
+wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
+wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
 lazy_static = "1.4.0"
