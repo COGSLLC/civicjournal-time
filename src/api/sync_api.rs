@@ -67,10 +67,18 @@ impl Journal {
         }
     }
 
+    /// Retrieves a leaf inclusion proof for the given leaf hash.
+    ///
+    /// This is a blocking wrapper around [`QueryEngine::get_leaf_inclusion_proof`]
+    /// for use in synchronous contexts.
     pub fn get_leaf_inclusion_proof(&self, leaf_hash: &[u8; 32]) -> CJResult<crate::query::types::LeafInclusionProof> {
         self.rt.block_on(self.query.get_leaf_inclusion_proof(leaf_hash)).map_err(Into::into)
     }
 
+    /// Retrieves a leaf inclusion proof with an optional page hint to speed up lookups.
+    ///
+    /// `page_id_hint` may contain the level and page ID where the caller believes
+    /// the leaf resides, avoiding a full search if correct.
     pub fn get_leaf_inclusion_proof_with_hint(
         &self,
         leaf_hash: &[u8; 32],
@@ -82,14 +90,20 @@ impl Journal {
             .map_err(Into::into)
     }
 
+    /// Reconstructs the state of a container at the specified timestamp.
     pub fn reconstruct_container_state(&self, container_id: &str, at: DateTime<Utc>) -> CJResult<crate::query::types::ReconstructedState> {
         self.rt.block_on(self.query.reconstruct_container_state(container_id, at)).map_err(Into::into)
     }
 
+    /// Retrieves all deltas for a container between two timestamps.
     pub fn get_delta_report(&self, container_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> CJResult<crate::query::types::DeltaReport> {
         self.rt.block_on(self.query.get_delta_report(container_id, from, to)).map_err(Into::into)
     }
 
+    /// Retrieves a paginated delta report for a container between two timestamps.
+    ///
+    /// `offset` specifies how many matching deltas to skip before returning results
+    /// and `limit` caps the number of deltas returned.
     pub fn get_delta_report_paginated(
         &self,
         container_id: &str,
@@ -104,6 +118,10 @@ impl Journal {
             .map_err(Into::into)
     }
 
+    /// Verifies integrity of a range of pages at the given level.
+    ///
+    /// Returns a list of [`PageIntegrityReport`] entries describing any
+    /// inconsistencies.
     pub fn get_page_chain_integrity(&self, level: u8, from: Option<u64>, to: Option<u64>) -> CJResult<Vec<crate::query::types::PageIntegrityReport>> {
         self.rt.block_on(self.query.get_page_chain_integrity(level, from, to)).map_err(Into::into)
     }

@@ -204,7 +204,6 @@ fn test_append_invalid_json_and_prev_hash() {
 
 #[test]
 fn test_confirm_ticket_failure_marks_permanent_after_retries() {
-    use civicjournal_time::turnstile::PendingStatus;
     use serde_json::Value;
     use std::fs;
 
