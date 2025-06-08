@@ -548,6 +548,5 @@ Also available:
 | Copyleft Requirements | Yes | No |
 | Priority Support | Community-based | Included |
 | Custom Development | Not included | Available |
-| Legal Indemnification | No | Included |
 
 See the [LICENSE](LICENSE) file for full AGPL-3.0-only license text and terms.
