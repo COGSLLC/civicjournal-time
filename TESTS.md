@@ -566,6 +566,8 @@ components:
 - `tests/integration/rollup_file_integration.rs` – verifies roll-up across
   levels using the file storage backend and ensures the query API sees all
   appended leaves.
+- `tests/demo_mode_tests.rs` – smoke tests covering Demo Mode configuration,
+  leaf generation, and the explore command.
 
 These tests can be run with `cargo test` and are executed automatically in CI.
 

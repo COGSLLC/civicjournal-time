@@ -113,11 +113,38 @@ journal-demo explore \
   * `/api/snapshots`
 * Visualize via D3 or plain tables.
 
-## 9. Database Isolation
+## 9. PostgreSQL Integration
 
-* Use a dedicated Postgres database (e.g., `journal_demo`).
-* Schema reset on startup (optional `--wipe` flag).
-* Support `--persist` flag to keep data between runs.
+Demo Mode can run entirely using the file storage backend, but to better mimic a
+production deployment it should also insert each generated payload into a real
+PostgreSQL table. This allows the turnstile trigger in
+[`TURNSTILE.md`](TURNSTILE.md) to validate that the ledger and the database stay
+in sync.
+
+* Launch a dedicated Postgres instance (e.g. `journal_demo`). The simplest
+  option is a small Docker Compose file:
+
+  ```yaml
+  services:
+    db:
+      image: postgres:15
+      environment:
+        POSTGRES_DB: journal_demo
+        POSTGRES_USER: demo
+        POSTGRES_PASSWORD: demo
+      ports:
+        - "5432:5432"
+  ```
+
+* On startup, create a `transactions` table and install the trigger from the
+  sample in `TURNSTILE.md`.
+* Schema reset is controlled by the optional `--wipe` flag.
+* Use the `[demo]` section in `Journal.toml` to provide a database URL
+  (`postgres://demo:demo@localhost:5432/journal_demo`).
+* When generating leaves, insert a row into the table in addition to appending
+  to the journal. This makes it possible to search records forward or backward
+  directly in SQL and cross-check with reconstructed snapshots.
+* Support a `--persist` flag to keep data between runs.
 
 ## 10. Running the Demo
 

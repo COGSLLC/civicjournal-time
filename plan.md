@@ -27,6 +27,8 @@
 - [x] Stabilize C and WASM FFI bindings for Turnstile and query features.
 - [x] Implement Query Engine with core query functionality including leaf inclusion proofs, state reconstruction, delta reports, and page chain integrity checks.
 - [x] Implement Snapshot system with dedicated level 250 and `SnapshotManager`; snapshot pages no longer require placeholder levels
+- [x] Implement initial Demo Mode scaffolding (config loader, generator, simulator, CLI)
+- [x] Expand Demo Mode with PostgreSQL integration and exploration CLI
 
 
 ## Next Steps

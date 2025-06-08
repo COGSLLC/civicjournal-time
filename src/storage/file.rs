@@ -370,11 +370,11 @@ impl StorageBackend for FileStorage {
                             };
 
                             if file_content.len() < 6 { // MAGIC (4) + VERSION (1) + COMPRESSION_ALGO (1)
-                                eprintln!("[FileStorage::load_page_by_hash] Skipping malformed file (too short): {}", page_path.display());
+                                log::warn!("[FileStorage::load_page_by_hash] Skipping malformed file (too short): {}", page_path.display());
                                 continue;
                             }
                             if &file_content[0..4] != MAGIC_STRING {
-                                eprintln!("[FileStorage::load_page_by_hash] Skipping file with incorrect magic string: {}", page_path.display());
+                                log::warn!("[FileStorage::load_page_by_hash] Skipping file with incorrect magic string: {}", page_path.display());
                                 continue;
                             }
                             // let _format_version = file_content[4]; // Could check this
@@ -382,7 +382,7 @@ impl StorageBackend for FileStorage {
                             let compression_algo = match u8_to_compression_algorithm(compression_algo_byte) {
                                 Ok(ca) => ca,
                                 Err(_) => {
-                                    eprintln!("[FileStorage::load_page_by_hash] Skipping file with unknown compression algorithm byte {}: {}", compression_algo_byte, page_path.display());
+                                    log::warn!("[FileStorage::load_page_by_hash] Skipping file with unknown compression algorithm byte {}: {}", compression_algo_byte, page_path.display());
                                     continue;
                                 }
                             };
@@ -404,7 +404,7 @@ impl StorageBackend for FileStorage {
                             let page: JournalPage = match serde_json::from_slice(&decompressed_data) {
                                 Ok(p) => p,
                                 Err(e) => {
-                                    eprintln!("[FileStorage::load_page_by_hash] Failed to deserialize page from {}: {}. Skipping.", page_path.display(), e);
+                                    log::error!("[FileStorage::load_page_by_hash] Failed to deserialize page from {}: {}. Skipping.", page_path.display(), e);
                                     continue;
                                 }
                             };
