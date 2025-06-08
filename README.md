@@ -320,6 +320,9 @@ file = false
 file_path = "./civicjournal.log"
 ```
 
+You can also override configuration values using environment variables. Prefix
+the upper‑case path with `CJ_`, for example `CJ_LOGGING_LEVEL=debug`.
+
 ### Backup and Restore
 
 ```rust
@@ -429,6 +432,55 @@ cargo run --features demo --bin journal-demo -- run --mode batch
 ```
 
 See [DEMOMODE.md](DEMOMODE.md) for full configuration and PostgreSQL setup instructions.
+
+## WebAssembly Bindings
+
+The crate exposes a `WasmJournal` type for WebAssembly environments when built
+with `wasm-bindgen`. Use `wasm-pack` to compile the project:
+
+```bash
+wasm-pack build --target web
+```
+
+In JavaScript, initialize the module and interact with the journal asynchronously:
+
+```javascript
+import init, { WasmJournal, default_config, journal_version } from './pkg/civicjournal_time.js';
+
+async function run() {
+  await init();
+  console.log('Version:', journal_version());
+  const cfg = default_config();
+  const journal = await WasmJournal.new(cfg);
+  const hash = await journal.append_leaf(Date.now(), 'web', JSON.stringify({ msg: 'hello' }));
+  console.log('Appended leaf', hash);
+}
+
+run();
+```
+
+## C FFI
+
+The library can also be compiled as a `cdylib` exposing a C-compatible API used
+by the Turnstile integration. Build with:
+
+```bash
+cargo build --release --features c-ffi
+```
+
+Link your C application against the resulting library and include the generated
+`cjt_ffi.h` header. See [TURNSTILE.md](TURNSTILE.md) for a complete list of
+available functions and an extended usage example.
+
+## Additional Features
+
+The codebase includes several capabilities that are not required for basic usage but can be enabled through configuration:
+
+* **Automatic Snapshot Scheduling** – periodic snapshots can be created by enabling the `[snapshot.automatic_creation]` section and supplying a cron expression or interval.
+* **Snapshot Retention Policies** – `[snapshot.retention]` allows pruning old snapshots based on count or maximum age.
+* **Metrics Collection** – the `[metrics]` section pushes internal metrics to a monitoring endpoint at a configurable interval.
+* **Environment Variable Overrides** – any configuration option can be overridden by environment variables prefixed with `CJ_` (e.g. `CJ_LOGGING_LEVEL=debug`).
+* **Memory Storage & Demo Mode** – a `MemoryStorage` backend and the `demo` feature provide an in-memory simulator useful for tests and demonstrations.
 
 ## Further Documentation
 

@@ -3,9 +3,7 @@
 use crate::error::CJError;
 use serde::{Deserialize, Serialize};
 
-// TODO: Define TimeLevel enum or structs for time hierarchy levels
-// (Minute, Hour, Day, Month, Year, Decade, Century)
-// Include methods for getting duration, parent/child levels, etc.
+/// Enumeration of supported time hierarchy levels used by the journal.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
 /// Represents the hierarchical levels in the time-based aggregation structure of the journal.
@@ -46,7 +44,10 @@ impl TimeLevel {
             4 => Ok(TimeLevel::Year),
             5 => Ok(TimeLevel::Decade),
             6 => Ok(TimeLevel::Century),
-            _ => Err(CJError::InvalidInput(format!("Invalid time level number: {}", level_num))),
+            _ => Err(CJError::InvalidInput(format!(
+                "Invalid time level number: {}",
+                level_num
+            ))),
         }
     }
 
@@ -67,12 +68,12 @@ impl TimeLevel {
     pub fn duration_seconds(&self) -> u64 {
         match self {
             TimeLevel::Minute => 60,
-            TimeLevel::Hour => 3_600,             // 60 * 60
+            TimeLevel::Hour => 3_600,            // 60 * 60
             TimeLevel::Day => 86_400,            // 24 * 3600
             TimeLevel::Month => 2_592_000,       // 30 * 86400 (approx)
             TimeLevel::Year => 31_536_000,       // 365 * 86400 (approx)
-            TimeLevel::Decade => 315_360_000,     // 10 * 31536000 (approx)
-            TimeLevel::Century => 3_153_600_000,  // 100 * 31536000 (approx)
+            TimeLevel::Decade => 315_360_000,    // 10 * 31536000 (approx)
+            TimeLevel::Century => 3_153_600_000, // 100 * 31536000 (approx)
         }
     }
 }

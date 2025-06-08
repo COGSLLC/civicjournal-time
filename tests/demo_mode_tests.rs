@@ -1,4 +1,5 @@
-#[cfg(feature = "demo")]
+#![cfg(feature = "demo")]
+
 use civicjournal_time::demo::{DemoConfig, generator::LeafGenerator};
 use civicjournal_time::api::async_api::Journal;
 use civicjournal_time::test_utils::{get_test_config, SHARED_TEST_ID_MUTEX, reset_global_ids};
