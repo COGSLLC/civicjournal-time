@@ -131,8 +131,7 @@ PostgreSQL table. This allows the turnstile trigger in
 [`TURNSTILE.md`](TURNSTILE.md) to validate that the ledger and the database stay
 in sync.
 
-* Launch a dedicated Postgres instance (e.g. `journal_demo`). The simplest
-  option is a small Docker Compose file:
+* Launch a dedicated Postgres instance (e.g. `journal_demo`). If `database_url` is omitted the demo will automatically start PostgreSQL using Docker or an embedded server. To run manually use a small Docker Compose file:
 
   ```yaml
   services:
