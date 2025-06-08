@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::core::merkle::MerkleTree;
 use crate::core::leaf::JournalLeaf;
+use crate::core::snapshot::SnapshotPagePayload;
 use crate::config::Config; // Added for calculating end_time
 use crate::types::time::RollupContentType;
 
@@ -80,6 +81,10 @@ pub enum PageContent {
     /// Used when RollupContentType::NetPatches is specified.
     /// Structured as ObjectID -> FieldName -> NewValue
     NetPatches(HashMap<String, HashMap<String, serde_json::Value>>),
+
+    /// Contains a full system snapshot payload.
+    /// This variant is used for pages on the dedicated Snapshot Level.
+    Snapshot(SnapshotPagePayload),
 }
 
 
@@ -165,10 +170,14 @@ impl JournalPage {
         config: &Config,
     ) -> Self {
 
-        // Calculate end_time based on level duration
-        let level_duration_seconds = config.time_hierarchy.levels
+        // Calculate end_time based on level duration.
+        // If the level is not defined in the time hierarchy configuration (e.g.,
+        // the dedicated snapshot level), fall back to a 1-second duration.
+        let level_duration_seconds = config
+            .time_hierarchy
+            .levels
             .get(level as usize)
-            .map_or(0, |lvl_config| lvl_config.duration_seconds);
+            .map_or(1, |lvl_config| lvl_config.duration_seconds);
         let end_time = time_window_start + chrono::Duration::seconds(level_duration_seconds as i64);
 
         // Merkle root for a new, empty page is default
@@ -195,9 +204,14 @@ impl JournalPage {
                 if level == 0 {
                     PageContent::Leaves(Vec::new())
                 } else {
-                    let level_config = config.time_hierarchy.levels.get(level as usize)
-                        .unwrap_or_else(|| panic!("Level {} config missing in JournalPage::new. Config: {:?}", level, config.time_hierarchy.levels));
-                    match level_config.rollup_config.content_type {
+                    let content_type = config
+                        .time_hierarchy
+                        .levels
+                        .get(level as usize)
+                        .map(|lvl| lvl.rollup_config.content_type)
+                        .unwrap_or(RollupContentType::ChildHashes);
+
+                    match content_type {
                         RollupContentType::ChildHashes => PageContent::ThrallHashes(Vec::new()),
                         RollupContentType::NetPatches => PageContent::NetPatches(HashMap::new()),
                     }
@@ -342,6 +356,17 @@ impl JournalPage {
                     net_patch_tuples_hashes
                 }
             }
+            PageContent::Snapshot(ref snapshot_payload) => {
+                // The snapshot_payload.container_states_merkle_root is the Merkle root
+                // of all container states within this snapshot. This pre-calculated root
+                // acts as the single "leaf" for this page's Merkle tree if there are states.
+                if !snapshot_payload.container_states.is_empty() {
+                    vec![snapshot_payload.container_states_merkle_root]
+                } else {
+                    // If there are no container states, there's nothing to include in the Merkle tree.
+                    Vec::new()
+                }
+            }
         };
 
         self.merkle_root = if actual_leaf_hashes.is_empty() {
@@ -383,6 +408,7 @@ impl JournalPage {
             PageContent::Leaves(leaves) => leaves.len(),
             PageContent::ThrallHashes(hashes) => hashes.len(),
             PageContent::NetPatches(patches) => patches.len(), // Number of ObjectIDs
+            PageContent::Snapshot(snapshot_payload) => snapshot_payload.container_states.len(), // Number of container states
         }
     }
 
@@ -392,6 +418,7 @@ impl JournalPage {
             PageContent::Leaves(leaves) => leaves.is_empty(),
             PageContent::ThrallHashes(hashes) => hashes.is_empty(),
             PageContent::NetPatches(patches) => patches.is_empty(),
+            PageContent::Snapshot(snapshot_payload) => snapshot_payload.container_states.is_empty(),
         }
     }
 
@@ -447,7 +474,7 @@ mod tests {
     use crate::types::time::TimeHierarchyConfig; // Renamed to avoid conflict
     use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
 
-    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
+    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig, SnapshotConfig};
     use crate::types::time::{TimeLevel, LevelRollupConfig}; // TimeHierarchyConfig removed, already imported
     use crate::StorageType;
 
@@ -469,6 +496,7 @@ mod tests {
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            snapshot: SnapshotConfig::default(),
         }
     }
 

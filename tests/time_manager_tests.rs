@@ -5,8 +5,8 @@ use civicjournal_time::core::page::{JournalPage, PageContent, PageIdGenerator};
 use civicjournal_time::LevelRollupConfig;
 use civicjournal_time::storage::memory::MemoryStorage;
 use civicjournal_time::config::{
-    Config, RetentionConfig, StorageConfig as TestStorageConfig, CompressionConfig, 
-    LoggingConfig, MetricsConfig, TimeHierarchyConfig, TimeLevel
+    Config, RetentionConfig, StorageConfig as TestStorageConfig, CompressionConfig,
+    LoggingConfig, MetricsConfig, TimeHierarchyConfig, TimeLevel, SnapshotConfig
 };
 use civicjournal_time::types::time::RollupRetentionPolicy;
 use civicjournal_time::StorageType as TestStorageType;
@@ -60,6 +60,7 @@ fn create_test_config(
         compression: Default::default(),
         logging: Default::default(),
         metrics: Default::default(),
+        snapshot: SnapshotConfig::default(),
     }
 }
 
@@ -387,6 +388,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         compression: Default::default(),
         logging: Default::default(),
         metrics: Default::default(),
+        snapshot: SnapshotConfig::default(),
     };
 
     let config = Arc::new(config_val);
@@ -794,6 +796,7 @@ fn create_age_based_rollup_config_and_manager(
         compression: CompressionConfig { enabled: false, algorithm: CompressionAlgorithm::None, level: 0 },
         logging: LoggingConfig::default(),
         metrics: MetricsConfig::default(),
+        snapshot: SnapshotConfig::default(),
     };
     let config = Arc::new(config_val);
     let storage = Arc::new(MemoryStorage::new());

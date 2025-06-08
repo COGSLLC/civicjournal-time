@@ -59,6 +59,7 @@ lazy_static = "1.4"  # For static lazy initialization
 dashmap = { version = "5.5.3", optional = true } # For MemoryStorage
 zip = "0.6" # For creating zip archives (backup)
 walkdir = "2" # For directory traversal
+uuid = { version = "1", features = ["v4", "serde"] } # For generating unique IDs
 
 [dev-dependencies]
 lazy_static = "1.4.0"

@@ -26,6 +26,7 @@
 - [x] Update all documentation to reflect current implementation details.
 - [x] Stabilize C and WASM FFI bindings for Turnstile and query features.
 - [x] Implement Query Engine with core query functionality including leaf inclusion proofs, state reconstruction, delta reports, and page chain integrity checks.
+- [x] Implement Snapshot system with dedicated level 250 and `SnapshotManager`; snapshot pages no longer require placeholder levels
 
 
 ## Next Steps
