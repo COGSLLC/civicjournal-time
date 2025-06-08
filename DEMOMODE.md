@@ -32,6 +32,8 @@ cargo run --features demo --bin journal-demo -- run --mode batch
 ```
 
 This generates demo data according to the `[demo]` section in `Journal.toml`.
+Base application settings are loaded from `config.toml` if it exists; otherwise
+default values are used.
 
 ## 4. Configuration
 
@@ -131,8 +133,10 @@ PostgreSQL table. This allows the turnstile trigger in
 [`TURNSTILE.md`](TURNSTILE.md) to validate that the ledger and the database stay
 in sync.
 
-* Launch a dedicated Postgres instance (e.g. `journal_demo`). The simplest
-  option is a small Docker Compose file:
+* Launch a dedicated Postgres instance (e.g. `journal_demo`). If `database_url`
+  is omitted the demo first tries Docker and falls back to an embedded server
+  downloaded at runtime. If both fail you'll be asked to install PostgreSQL
+  locally. To run manually use a small Docker Compose file:
 
   ```yaml
   services:
