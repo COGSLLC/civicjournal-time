@@ -1,6 +1,6 @@
 use crate::config::{
-    CompressionAlgorithm, CompressionConfig, Config, LogLevel, LoggingConfig, RetentionConfig,
-    StorageConfig, StorageType, TimeHierarchyConfig,
+    CompressionAlgorithm, CompressionConfig, Config, LogLevel, LoggingConfig,
+    RetentionConfig, SnapshotConfig, StorageConfig, StorageType, TimeHierarchyConfig,
 };
 use crate::error::CJError;
 use crate::config::validation::validate_config;
@@ -31,6 +31,7 @@ fn create_test_config() -> Config {
             period_seconds: 30 * 24 * 60 * 60, // 30 days
             cleanup_interval_seconds: 3600, // 1 hour
         },
+        snapshot: SnapshotConfig::default(),
     }
 }
 

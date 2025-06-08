@@ -3,6 +3,7 @@ use civicjournal_time::storage::StorageBackend;
 use civicjournal_time::core::page::{JournalPage, PageContent};
 use civicjournal_time::core::leaf::JournalLeaf;
 use civicjournal_time::config::Config;
+use civicjournal_time::config::SnapshotConfig;
 use civicjournal_time::CompressionAlgorithm;
 use civicjournal_time::config::CompressionConfig;
 use std::path::Path;
@@ -44,6 +45,7 @@ fn create_test_config(compression_algo: CompressionAlgorithm) -> Arc<Config> {
         logging: Default::default(),
         metrics: Default::default(),
         retention: Default::default(),
+        snapshot: SnapshotConfig::default(),
         force_rollup_on_shutdown: false,
     })
 }

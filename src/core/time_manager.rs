@@ -894,7 +894,7 @@ mod tests {
     use chrono::Duration;
     use chrono::TimeZone; // Cascade: Added for with_ymd_and_hms
     use serde_json::json; // ADDED for json! macro
-    use crate::config::{Config, RetentionConfig, StorageConfig as TestStorageConfig, CompressionConfig, LoggingConfig, MetricsConfig};
+    use crate::config::{Config, RetentionConfig, StorageConfig as TestStorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, SnapshotConfig};
     use crate::StorageType as TestStorageType; // Re-exported at crate root
      // Re-exported at crate root
     use crate::TimeLevel;
@@ -953,16 +953,17 @@ mod tests {
                 base_path: "".to_string(),
                 max_open_files: 100, // Default from StorageConfig
             },
-            retention: RetentionConfig {
-                enabled: retention_enabled,
-                period_seconds: retention_period_seconds,
-                cleanup_interval_seconds: 300, // Default, not typically used in these specific tests
-            },
-            compression: CompressionConfig::default(),
-            logging: LoggingConfig::default(),
-            metrics: MetricsConfig::default(),
-        }
+        retention: RetentionConfig {
+            enabled: retention_enabled,
+            period_seconds: retention_period_seconds,
+            cleanup_interval_seconds: 300, // Default, not typically used in these specific tests
+        },
+        compression: CompressionConfig::default(),
+        logging: LoggingConfig::default(),
+        metrics: MetricsConfig::default(),
+        snapshot: SnapshotConfig::default(),
     }
+}
 
     // Helper to create a TimeHierarchyManager with MemoryStorage
     fn create_test_manager() -> (TimeHierarchyManager, Arc<MemoryStorage>) {
@@ -1152,6 +1153,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
         compression: CompressionConfig::default(),
         logging: LoggingConfig::default(),
         metrics: MetricsConfig::default(),
+        snapshot: SnapshotConfig::default(),
     };
     // max_leaves_per_page is set to 1 above for cascading tests.
 
@@ -1618,6 +1620,7 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
             compression: CompressionConfig::default(),
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
+            snapshot: SnapshotConfig::default(),
         };
         let config = Arc::new(config_val);
         let storage = Arc::new(MemoryStorage::new());

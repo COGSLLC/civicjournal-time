@@ -88,6 +88,9 @@ Journal pages are stored in `.cjt` files with a 6-byte header:
   - Atomic restore operations
   - Backup manifest with integrity information
   - Asynchronous API for non-blocking operations
+* **Snapshots**:
+  - Dedicated level (default `250`) stores full system state snapshots without requiring placeholder levels in between
+  - Enables fast restoration and archival of older journal data
 
 ### Query Capabilities
 * **Merkle Proofs**: Verify inclusion of specific leaves

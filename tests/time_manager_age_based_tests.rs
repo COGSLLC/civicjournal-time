@@ -67,10 +67,6 @@ fn create_age_based_test_config(
             base_path: "./test_data".to_string(),
             max_open_files: 1000,
         },
-            enabled: false,
-            period_seconds: 0,
-            cleanup_interval_seconds: 300,
-        },
         compression: CompressionConfig::default(),
         logging: LoggingConfig {
             level: LogLevel::Info,
@@ -84,6 +80,7 @@ fn create_age_based_test_config(
             push_interval_seconds: 15,
         }
     }
+}
 
 #[tokio::test]
 async fn test_age_based_rollup() {
