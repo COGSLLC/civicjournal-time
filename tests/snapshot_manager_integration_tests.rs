@@ -5,10 +5,8 @@ use civicjournal_time::{
     storage::memory::MemoryStorage,
     storage::StorageBackend,
     core::leaf::JournalLeaf,
-    core::page::{PageContent, JournalPage},
-    core::snapshot::{SnapshotContainerState, SnapshotPagePayload},
+    core::page::PageContent,
     core::merkle::MerkleTree, // For verifying empty Merkle root
-    error::CJError,
     types::time::{LevelRollupConfig, RollupContentType, TimeLevel}, // Added TimeLevel, RollupContentType is correct here
     StorageType, // Assuming StorageType is re-exported at crate::config or crate root
 };
@@ -243,7 +241,6 @@ async fn test_create_snapshot_with_finalized_l0_page() {
 
     let finalized_l0_pages = storage.list_finalized_pages_summary(0).await.unwrap();
     assert!(!finalized_l0_pages.is_empty(), "Expected at least one finalized L0 page");
-    let finalized_l0_page_summary = finalized_l0_pages.first().unwrap();
 
     let as_of_timestamp = now; 
     let result = snapshot_manager.create_snapshot(as_of_timestamp, None).await;

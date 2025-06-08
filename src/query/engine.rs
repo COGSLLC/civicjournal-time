@@ -224,6 +224,10 @@ pub async fn get_leaf_inclusion_proof_with_hint(
         }
     }
 
+    /// Rebuilds the state of a container at the specified timestamp.
+    ///
+    /// The returned [`ReconstructedState`] contains all deltas for the
+    /// container up to `at_timestamp` applied in order.
     pub async fn reconstruct_container_state(
         &self,
         container_id: &str,
@@ -264,6 +268,7 @@ pub async fn get_leaf_inclusion_proof_with_hint(
         Ok(ReconstructedState { container_id: container_id.to_string(), at_point: QueryPoint::Timestamp(at_timestamp), state_data: state })
     }
 
+    /// Retrieves all deltas for a container between two timestamps.
     pub async fn get_delta_report(
         &self,
         container_id: &str,
@@ -390,6 +395,9 @@ pub async fn get_leaf_inclusion_proof_with_hint(
         })
     }
 
+    /// Verifies the hash chain integrity for a range of pages at the given level.
+    ///
+    /// Returns a vector of [`PageIntegrityReport`] describing any detected issues.
     pub async fn get_page_chain_integrity(
         &self,
         level: u8,

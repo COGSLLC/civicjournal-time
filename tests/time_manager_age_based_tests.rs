@@ -5,13 +5,13 @@ use civicjournal_time::types::time::RollupContentType;
 use civicjournal_time::storage::memory::MemoryStorage;
 use civicjournal_time::config::{
     Config, TimeHierarchyConfig, TimeLevel, LevelRollupConfig, StorageConfig, LoggingConfig, MetricsConfig,
-    RetentionConfig, CompressionConfig
+    CompressionConfig
 };
 use civicjournal_time::StorageType;
 use civicjournal_time::LogLevel;
 use civicjournal_time::core::leaf::JournalLeaf;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde_json::json;
 use tokio::time::{sleep, Duration as TokioDuration};
 use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
