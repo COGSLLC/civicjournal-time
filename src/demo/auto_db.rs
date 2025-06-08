@@ -1,5 +1,6 @@
 #![cfg(feature = "demo")]
 use crate::CJResult;
+use log::{info, warn};
 use std::process::Command;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -16,14 +17,20 @@ pub enum PgHandle {
 
 impl Drop for PgHandle {
     fn drop(&mut self) {
-        if let PgHandle::Docker(id) = self {
-            let _ = Command::new("docker").args(["rm", "-f", id]).output();
+        match self {
+            PgHandle::Docker(id) => {
+                let _ = Command::new("docker").args(["rm", "-f", id]).output();
+            }
+            PgHandle::Embedded(pg) => {
+                let _ = pg.stop_db_sync();
+            }
         }
     }
 }
 
 pub async fn launch_postgres() -> CJResult<(String, PgHandle)> {
     if Command::new("docker").arg("--version").output().is_ok() {
+        info!("Starting PostgreSQL using Docker");
         let output = Command::new("docker")
             .args([
                 "run",
@@ -51,7 +58,10 @@ pub async fn launch_postgres() -> CJResult<(String, PgHandle)> {
                 }
             }
         }
+        warn!("Docker not available or failed to start Postgres, falling back to embedded server");
     }
+    info!("Starting embedded PostgreSQL");
+
     let settings = PgSettings {
         database_dir: PathBuf::from("target/pg_demo"),
         port: 5432,

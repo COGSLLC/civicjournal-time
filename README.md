@@ -446,7 +446,15 @@ Use the optional `demo` feature to generate sample data and explore rollups and 
 cargo run --features demo --bin journal-demo -- run --mode batch
 ```
 
-If no database URL is provided, the demo automatically launches a local PostgreSQL instance using Docker or an embedded server. See [DEMOMODE.md](DEMOMODE.md) for full configuration and PostgreSQL setup instructions.
+The simulator reads the `[demo]` section from `Journal.toml`. Base application
+settings come from `config.toml` if present, otherwise defaults are used.
+
+If no database URL is provided, the demo first tries to start PostgreSQL using
+Docker. If Docker isn't available it falls back to an embedded server downloaded
+at runtime. Should both methods fail you'll be prompted to install PostgreSQL or
+provide `database_url` manually. See [DEMOMODE.md](DEMOMODE.md) for full
+configuration and PostgreSQL setup instructions.
+
 
 ## WebAssembly Bindings
 
