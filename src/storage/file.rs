@@ -1016,7 +1016,7 @@ mod tests_to_merge {
     use crate::core::page::JournalPage;
 use crate::LevelRollupConfig;
     
-    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
+    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig, SnapshotConfig};
     use crate::types::time::{TimeLevel};
     use crate::{StorageType, TimeHierarchyConfig, CompressionAlgorithm};
     use std::fs::File as StdFile; // For opening the backup zip file
@@ -1041,6 +1041,7 @@ use crate::LevelRollupConfig;
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            snapshot: SnapshotConfig::default(),
         }
     }
 

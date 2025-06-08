@@ -184,7 +184,7 @@ mod tests {
     use crate::core::page::JournalPage; // For creating dummy pages
     use chrono::{DateTime, Utc};
     
-    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
+    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig, SnapshotConfig};
     use crate::{core::leaf::JournalLeaf, StorageType, core::page::PageContent};
     use crate::types::time::{TimeHierarchyConfig, TimeLevel, LevelRollupConfig};
     use crate::core::leaf::{LeafData, LeafDataV1}; // Added missing imports
@@ -207,6 +207,7 @@ mod tests {
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            snapshot: SnapshotConfig::default(),
         }
     }
 

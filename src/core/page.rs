@@ -170,10 +170,14 @@ impl JournalPage {
         config: &Config,
     ) -> Self {
 
-        // Calculate end_time based on level duration
-        let level_duration_seconds = config.time_hierarchy.levels
+        // Calculate end_time based on level duration.
+        // If the level is not defined in the time hierarchy configuration (e.g.,
+        // the dedicated snapshot level), fall back to a 1-second duration.
+        let level_duration_seconds = config
+            .time_hierarchy
+            .levels
             .get(level as usize)
-            .map_or(0, |lvl_config| lvl_config.duration_seconds);
+            .map_or(1, |lvl_config| lvl_config.duration_seconds);
         let end_time = time_window_start + chrono::Duration::seconds(level_duration_seconds as i64);
 
         // Merkle root for a new, empty page is default
@@ -200,9 +204,14 @@ impl JournalPage {
                 if level == 0 {
                     PageContent::Leaves(Vec::new())
                 } else {
-                    let level_config = config.time_hierarchy.levels.get(level as usize)
-                        .unwrap_or_else(|| panic!("Level {} config missing in JournalPage::new. Config: {:?}", level, config.time_hierarchy.levels));
-                    match level_config.rollup_config.content_type {
+                    let content_type = config
+                        .time_hierarchy
+                        .levels
+                        .get(level as usize)
+                        .map(|lvl| lvl.rollup_config.content_type)
+                        .unwrap_or(RollupContentType::ChildHashes);
+
+                    match content_type {
                         RollupContentType::ChildHashes => PageContent::ThrallHashes(Vec::new()),
                         RollupContentType::NetPatches => PageContent::NetPatches(HashMap::new()),
                     }
@@ -465,7 +474,7 @@ mod tests {
     use crate::types::time::TimeHierarchyConfig; // Renamed to avoid conflict
     use crate::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids}; // Import shared test items
 
-    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig};
+    use crate::config::{Config, StorageConfig, CompressionConfig, LoggingConfig, MetricsConfig, RetentionConfig, SnapshotConfig};
     use crate::types::time::{TimeLevel, LevelRollupConfig}; // TimeHierarchyConfig removed, already imported
     use crate::StorageType;
 
@@ -487,6 +496,7 @@ mod tests {
             logging: LoggingConfig::default(),
             metrics: MetricsConfig::default(),
             retention: RetentionConfig::default(),
+            snapshot: SnapshotConfig::default(),
         }
     }
 

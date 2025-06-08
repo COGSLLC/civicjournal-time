@@ -167,7 +167,8 @@ Key configuration aspects include:
     *   A top-level `enabled` boolean within the `[snapshot]` section (and `SnapshotConfig` struct) to globally activate or deactivate the snapshot feature.
 
 *   **Snapshot Level Index:**
-    *   **(Open Question):** How the dedicated "Snapshot Level" is specified in the configuration (e.g., a specific numerical index or a named reference within the `time_hierarchy` configuration) still needs to be defined.
+    *   The dedicated level for snapshot pages is configured via `snapshot.dedicated_level`.
+      The default value is `250`, chosen to be well above any typical rollup levels.
 
 *   **Retention Rules (`[snapshot.retention]` / `SnapshotRetentionConfig` struct):**
     *   `enabled`: A boolean to activate snapshot retention policies. If `false`, snapshots are kept indefinitely unless manually pruned.
