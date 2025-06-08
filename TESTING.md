@@ -1,6 +1,6 @@
 <<<<COMPLETED>>>
 Test Plan for CivicJournal-Time
-The test plan is organized by test type (unit, integration, E2E, API) and by module/file. Each item references functions or behaviors to cover. Citations point to the relevant code sections.
+The test plan is organized by test type (unit, integration, E2E, API) and by module/file. Each item references functions or behaviors to cover. This section is included for transparency; end users typically do not need to run these tests.
 1. Unit Tests
 core::leaf.rs (JournalLeaf & LeafData)
 ✅ Test JournalLeaf::new(...) with various inputs: no previous hash and with a given prev_hash, verifying that leaf_id increments (global counter reset via test_utils::reset_global_ids) and that leaf_hash changes if any input changes. For example, creating two leaves with identical payloads but different prev_hash should yield different hashes.

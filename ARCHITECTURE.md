@@ -3,6 +3,8 @@
 **Last Updated**: 2025-06-05
 **Version**: 0.4.0
 
+This consumer-oriented overview explains how CivicJournal-Time works and what it provides. It is not an implementation guide.
+
 ## Overview
 
 CivicJournal-Time is a high-performance, append-only ledger system designed for verifiable audit trails and time-series data management. This document provides a comprehensive overview of the system's architecture, components, and design decisions.

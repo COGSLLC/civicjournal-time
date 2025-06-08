@@ -2,6 +2,8 @@
 
 The query system provides read access and verification utilities for data stored in the CivicJournal time-series ledger.  It is centred around the `QueryEngine` type which wraps a `StorageBackend` and a `TimeHierarchyManager`.
 
+The following sections summarise the features available to users when querying a journal instance.
+
 ## Components
 
 - **`QueryEngine`** (`src/query/engine.rs`)

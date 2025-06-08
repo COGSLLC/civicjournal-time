@@ -1,7 +1,9 @@
 # CivicJournal Time - Rollup Mechanism
 
-**Last Updated**: 2025-06-05  
+**Last Updated**: 2025-06-05
 **Version**: 0.4.0
+
+This document explains the rollup feature for readers evaluating how data is aggregated.
 
 ## Overview
 

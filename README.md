@@ -1,11 +1,10 @@
-⚠️ **BETA (v0.4.0)** — Core rollup, turnstile, snapshot, and query features are stable. Production-ready for typical use cases.
+⚠️ **BETA (v0.4.0)** — Core rollup, turnstile, snapshot, and query features are stable. Full hierarchical rollups and the query engine are fully operational for typical use cases.
 # CivicJournal-Time
 
 **An append-only, verifiable ledger for robust audit trails and time-series data management.**
 
 CivicJournal-Time is a Rust-based system designed to create immutable, chronologically-ordered logs of events or data changes. It's particularly well-suited for tracking the history of external systems, providing a secure and verifiable audit trail that allows for state reconstruction, data integrity verification, and detailed auditing.
-
-⚠︎ **BETA (v0.4.0)** — Full hierarchical rollups, snapshots, and query engine operational.
+This README serves as an **implementation guide** for using and integrating CivicJournal-Time. It covers configuration, journal operations, and references to deeper documentation. See the [Quick Start](#quick-start) section to begin.
 
 ## Core Concepts
 
@@ -115,6 +114,23 @@ These capabilities are exposed through the public Rust APIs as well as C and
 WASM FFI bindings under `src/ffi/`. The optional Turnstile pattern uses these
 bindings to coordinate writes with external databases while ensuring
 append-only guarantees.
+
+## Quick Start
+
+Add the crate to your project and create a journal:
+
+```bash
+cargo add civicjournal-time
+```
+
+```rust
+use civicjournal_time::{Journal, default_config};
+
+let cfg = default_config();
+let mut journal = Journal::new(cfg)?;
+journal.append_leaf("example", serde_json::json!({"msg": "hello"}))?;
+```
+
 
 ## Project Structure
 
@@ -396,7 +412,6 @@ For running tests that manipulate time for age-based rollup testing:
 cargo test -- --include-ignored
 ```
 
-*(Note for Windows users: File locking issues with the test executable can sometimes occur. If `cargo clean` or `cargo test` fails unexpectedly, a system reboot or checking for locking processes might be necessary.)*
 
 ## Configuration
 
@@ -487,9 +502,10 @@ The codebase includes several capabilities that are not required for basic usage
 For more in-depth information, please refer to the following documents in the repository:
 
 *   `ARCHITECTURE.md`: Describes the overall system architecture.
-*   `ROLLUP.MD`: Details the rollup mechanism.
-*   `CivicJournalSpec.txt`: (Note: This document may contain some outdated information regarding page structure and file formats. Prioritize information from `README.md`, `ARCHITECTURE.MD`, and `ROLLUP.MD`.)
-*   `plan.md`: Tracks development progress and future plans.
+*   `ROLLUP.md`: Details the rollup mechanism.
+*   `SNAPSHOT.md`: Snapshot and restore procedures.
+*   `QUERY.md`: Data retrieval and verification tools.
+*   `plan.md`: Development progress and future plans.
 
 ## Contributing
 
