@@ -138,6 +138,7 @@ in sync.
   downloaded at runtime. If both fail you'll be asked to install PostgreSQL
   locally. To run manually use a small Docker Compose file:
 
+
   ```yaml
   services:
     db:

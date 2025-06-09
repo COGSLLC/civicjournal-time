@@ -61,6 +61,7 @@ pub async fn launch_postgres() -> CJResult<(String, PgHandle)> {
         warn!("Docker not available or failed to start Postgres, falling back to embedded server");
     }
     info!("Starting embedded PostgreSQL");
+
     let settings = PgSettings {
         database_dir: PathBuf::from("target/pg_demo"),
         port: 5432,
