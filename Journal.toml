@@ -8,4 +8,3 @@ containers = 20
 leaf_rate = { per_real_second = 10 }
 rollup = { l0_size=1000, l1_time="1h", l2_time="1d" }
 snapshot = { every="P1Y" }
-database_url = "postgres://demo:demo@localhost:5432/journal_demo"
