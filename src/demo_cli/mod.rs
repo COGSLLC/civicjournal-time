@@ -481,21 +481,32 @@ async fn nav_cmd(journal: &Journal, container: &str) -> CJResult<()> {
     let mut stdout = io::stdout();
     let mut idx: usize = 0;
     let mut level: u8 = 0;
+    let mut needs_render = true;
     loop {
-        render_nav(&mut stdout, container, level, idx, &leaves, journal).await?;
+        if needs_render {
+            render_nav(&mut stdout, container, level, idx, &leaves, journal).await?;
+            needs_render = false;
+        }
         if event::poll(StdDuration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
-                    KeyCode::Left => if idx > 0 { idx -= 1; },
-                    KeyCode::Right => if idx + 1 < leaves.len() { idx += 1; },
-                    KeyCode::Up => if level < 5 { if find_page_for_ts(journal, level+1, leaves[idx].timestamp).await?.is_some() { level += 1; } },
-                    KeyCode::Down => if level > 0 { level -= 1; },
+                    KeyCode::Left => if idx > 0 { idx -= 1; needs_render = true; },
+                    KeyCode::Right => if idx + 1 < leaves.len() { idx += 1; needs_render = true; },
+                    KeyCode::Up => {
+                        if level < 5 {
+                            if find_page_for_ts(journal, level + 1, leaves[idx].timestamp).await?.is_some() {
+                                level += 1;
+                                needs_render = true;
+                            }
+                        }
+                    }
+                    KeyCode::Down => if level > 0 { level -= 1; needs_render = true; },
                     KeyCode::Char('q') | KeyCode::Char('Q') => break,
-                    KeyCode::Char('h') | KeyCode::Char('H') => { show_help(&mut stdout)?; },
-                    KeyCode::Char('s') | KeyCode::Char('S') => { show_state_prompt(journal, container).await?; },
-                    KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; },
-                    KeyCode::Char('f') | KeyCode::Char('F') => { if let Some(n) = search_prompt(&leaves).await? { idx = n; } },
-                    KeyCode::Char('d') | KeyCode::Char('D') => { dump_prompt(&leaves[idx]).await?; },
+                    KeyCode::Char('h') | KeyCode::Char('H') => { show_help(&mut stdout)?; needs_render = true; },
+                    KeyCode::Char('s') | KeyCode::Char('S') => { show_state_prompt(journal, container).await?; needs_render = true; },
+                    KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; needs_render = true; },
+                    KeyCode::Char('f') | KeyCode::Char('F') => { if let Some(n) = search_prompt(&leaves).await? { idx = n; needs_render = true; } },
+                    KeyCode::Char('d') | KeyCode::Char('D') => { dump_prompt(&leaves[idx]).await?; needs_render = true; },
                     _ => {}
                 }
             }
