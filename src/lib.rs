@@ -24,8 +24,8 @@ pub mod storage;
 pub mod time;
 pub mod types;
 #[cfg(feature = "demo")]
-/// Demo mode for generating and exploring synthetic data.
-pub mod demo;
+/// Command line scaffolding for Demo Mode.
+pub mod demo_cli;
 /// Utilities for testing purposes only, compiled with `#[cfg(test)]`.
 pub mod test_utils;
 

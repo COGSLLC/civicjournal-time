@@ -111,8 +111,8 @@ concurrent = ["parking_lot"]
 demo = ["async", "async_api", "logging", "dep:tokio-postgres", "dep:clap", "dep:fake", "dep:rand", "dep:pg-embed"]
 
 [[bin]]
-name = "journal-demo"
-path = "src/bin/journal-demo.rs"
+name = "cj-demo"
+path = "src/bin/cj-demo.rs"
 required-features = ["demo"]
 
 [[bench]]
