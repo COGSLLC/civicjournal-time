@@ -28,11 +28,15 @@ use crossterm::{execute,
 #[command(author, version, about="CivicJournal Demo CLI", long_about=None)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Run default demo (generate data and launch navigator)
+    Demo,
+    /// Remove demo data directory
+    Cleanup,
     /// Simulate journal history
     Simulate {
         #[arg(long)]
@@ -124,30 +128,42 @@ pub enum PageCmd {
 pub async fn run() -> CJResult<()> {
     let cli = Cli::parse();
     let config = init(None)?;
-    let journal = Journal::new(config).await?;
-    match cli.command {
+    match cli.command.unwrap_or(Commands::Demo) {
+        Commands::Demo => {
+            run_demo(&config).await?
+        }
+        Commands::Cleanup => {
+            cleanup_demo(&config)?;
+            return Ok(());
+        }
         Commands::Simulate { container, fields, duration, errors_parked: _, errors_malformed: _, start, seed } => {
+            let journal = Journal::new(config).await?;
             simulate(&journal, &container, fields, &duration, &start, seed).await?;
         }
         Commands::State { container, as_of } => {
+            let journal = Journal::new(config).await?;
             state_cmd(&journal, &container, &as_of).await?;
         }
         Commands::Revert { container, as_of, db_url } => {
+            let journal = Journal::new(config).await?;
             revert_cmd(&journal, &container, &as_of, &db_url).await?;
         }
         Commands::Leaf { command } => {
+            let journal = Journal::new(config).await?;
             match command {
                 LeafCmd::List { container } => list_leaves(&journal, &container).await?,
                 LeafCmd::Show { container, leaf_id, pretty_json } => show_leaf(&journal, &container, leaf_id, pretty_json).await?,
             }
         }
         Commands::Page { command } => {
+            let journal = Journal::new(config).await?;
             match command {
                 PageCmd::List { container: _, level } => list_pages(&journal, level).await?,
                 PageCmd::Show { container: _, page_id, raw } => show_page(&journal, page_id, raw).await?,
             }
         }
         Commands::Nav { container } => {
+            let journal = Journal::new(config).await?;
             nav_cmd(&journal, &container).await?;
         }
     }
@@ -465,21 +481,32 @@ async fn nav_cmd(journal: &Journal, container: &str) -> CJResult<()> {
     let mut stdout = io::stdout();
     let mut idx: usize = 0;
     let mut level: u8 = 0;
+    let mut needs_render = true;
     loop {
-        render_nav(&mut stdout, container, level, idx, &leaves, journal).await?;
+        if needs_render {
+            render_nav(&mut stdout, container, level, idx, &leaves, journal).await?;
+            needs_render = false;
+        }
         if event::poll(StdDuration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
-                    KeyCode::Left => if idx > 0 { idx -= 1; },
-                    KeyCode::Right => if idx + 1 < leaves.len() { idx += 1; },
-                    KeyCode::Up => if level < 5 { if find_page_for_ts(journal, level+1, leaves[idx].timestamp).await?.is_some() { level += 1; } },
-                    KeyCode::Down => if level > 0 { level -= 1; },
+                    KeyCode::Left => if idx > 0 { idx -= 1; needs_render = true; },
+                    KeyCode::Right => if idx + 1 < leaves.len() { idx += 1; needs_render = true; },
+                    KeyCode::Up => {
+                        if level < 5 {
+                            if find_page_for_ts(journal, level + 1, leaves[idx].timestamp).await?.is_some() {
+                                level += 1;
+                                needs_render = true;
+                            }
+                        }
+                    }
+                    KeyCode::Down => if level > 0 { level -= 1; needs_render = true; },
                     KeyCode::Char('q') | KeyCode::Char('Q') => break,
-                    KeyCode::Char('h') | KeyCode::Char('H') => { show_help(&mut stdout)?; },
-                    KeyCode::Char('s') | KeyCode::Char('S') => { show_state_prompt(journal, container).await?; },
-                    KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; },
-                    KeyCode::Char('f') | KeyCode::Char('F') => { if let Some(n) = search_prompt(&leaves).await? { idx = n; } },
-                    KeyCode::Char('d') | KeyCode::Char('D') => { dump_prompt(&leaves[idx]).await?; },
+                    KeyCode::Char('h') | KeyCode::Char('H') => { show_help(&mut stdout)?; needs_render = true; },
+                    KeyCode::Char('s') | KeyCode::Char('S') => { show_state_prompt(journal, container).await?; needs_render = true; },
+                    KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; needs_render = true; },
+                    KeyCode::Char('f') | KeyCode::Char('F') => { if let Some(n) = search_prompt(&leaves).await? { idx = n; needs_render = true; } },
+                    KeyCode::Char('d') | KeyCode::Char('D') => { dump_prompt(&leaves[idx]).await?; needs_render = true; },
                     _ => {}
                 }
             }
@@ -487,6 +514,49 @@ async fn nav_cmd(journal: &Journal, container: &str) -> CJResult<()> {
     }
     execute!(io::stdout(), ResetColor, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()?;
+    Ok(())
+}
+
+async fn run_demo(config: &'static crate::Config) -> CJResult<()> {
+    if config.storage.storage_type == crate::StorageType::File {
+        let _ = std::fs::remove_dir_all(&config.storage.base_path);
+    }
+    let journal = Journal::new(config).await?;
+    generate_demo_data(&journal, "demoDB").await?;
+    nav_cmd(&journal, "demoDB").await
+}
+
+fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
+    if config.storage.storage_type == crate::StorageType::File {
+        if std::path::Path::new(&config.storage.base_path).exists() {
+            std::fs::remove_dir_all(&config.storage.base_path)?;
+            println!("Removed {}", &config.storage.base_path);
+        }
+    }
+    Ok(())
+}
+
+async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> {
+    use crate::turnstile::Turnstile;
+    let mut ts = Turnstile::new("00".repeat(32), 1);
+    let base = Utc::now();
+
+    let p1 = json!({"field1":"alpha"});
+    let t1 = ts.append(&p1.to_string(), base.timestamp() as u64)?;
+    journal.append_leaf(base, None, container.to_string(), p1).await?;
+    ts.confirm_ticket(&t1, true, None)?;
+
+    let p2 = json!({"field2":"beta"});
+    let t2 = ts.append(&p2.to_string(), (base + Duration::seconds(1)).timestamp() as u64)?;
+    ts.confirm_ticket(&t2, false, Some("db error"))?;
+    journal.append_leaf(base + Duration::seconds(1), None, container.to_string(), json!({"log":"db error"})).await?;
+    journal.append_leaf(base + Duration::seconds(2), None, container.to_string(), p2.clone()).await?;
+    ts.confirm_ticket(&t2, true, None)?;
+
+    if ts.append("{", (base + Duration::seconds(3)).timestamp() as u64).is_err() {
+        journal.append_leaf(base + Duration::seconds(3), None, container.to_string(), json!({"log":"malformed packet"})).await?;
+    }
+
     Ok(())
 }
 
