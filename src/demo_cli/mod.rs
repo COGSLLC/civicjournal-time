@@ -506,7 +506,7 @@ async fn nav_cmd(journal: &Journal, container: &str) -> CJResult<()> {
     Ok(())
 }
 
-async fn run_demo(config: &crate::Config) -> CJResult<()> {
+async fn run_demo(config: &'static crate::Config) -> CJResult<()> {
     if config.storage.storage_type == crate::StorageType::File {
         let _ = std::fs::remove_dir_all(&config.storage.base_path);
     }
