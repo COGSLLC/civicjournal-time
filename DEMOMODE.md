@@ -1,204 +1,314 @@
-# Demo Mode Specification
+# CivicJournal Demo Mode
 
-This document outlines the **Demo Mode** for the Journal system. It provides instructions for generating, exploring, and validating years of simulated journal data.
+This document describes the new **Demo Mode** for CivicJournal. The CLI is now named `cj-demo` and provides commands to simulate years of history, inspect ledger state, and experiment with rollbacks.
 
-## 1. Overview
+## 1. CLI Overview
 
-* **Purpose**: Showcase rollup, snapshot, and exploration features in a safe, isolated environment.
-* **Goals**:
+```
+cj-demo
+├─ simulate     # run a time-travel simulation
+├─ state        # show reconstructed DB state at T
+├─ revert       # rollback your real DB to state at T
+├─ leaf         # examine individual leaves
+├─ page         # examine individual pages
+└─ nav          # interactive navigator (arrow-keys)
+```
 
-  * Rapidly generate realistic journal activity over a 20‑year span.
-  * Trigger rollups and snapshots at configurable intervals.
-  * Offer interactive or CLI‑based exploration of history and state.
+Each subcommand exposes options tailored to the operation. Only the scaffolding is currently implemented.
 
-## 2. Prerequisites
+## 2. simulate
 
-* Rust 1.68+ (or your chosen language runtime)
-* PostgreSQL 12+ instance (dedicated schema/database)
-* Optional: Docker Compose setup for isolation
-* Dependencies:
-
-  * CLI parser (e.g., Clap for Rust)
-  * Async/runtime (e.g., Tokio)
-  * DB client (e.g., SQLx or Diesel)
-  * Faker or lorem ipsum crate for fake content
-
-## 3. Quick Start
-
-Build and run the simulator with the optional `demo` feature:
+The `simulate` command generates synthetic fields and appends leaves over a span of time. Example:
 
 ```bash
-cargo run --features demo --bin journal-demo -- run --mode batch
+cj-demo simulate \
+  --container demoDB \
+  --fields 50 \
+  --duration 20y \
+  --errors-parked 2 \
+  --errors-malformed 1 \
+  --start 2000-01-01T00:00:00Z \
+  --seed 42
 ```
 
-This generates demo data according to the `[demo]` section in `Journal.toml`.
-Base application settings are loaded from `config.toml` if it exists; otherwise
-default values are used.
+* `--container`: journal table or namespace
+* `--fields`: number of fields to create
+* `--duration`: total simulated span (`20y`, `6m`, `100d`, ...)
+* `--errors-parked`: simulate transient errors (park then retry)
+* `--errors-malformed`: simulate malformed payloads (park then drop)
+* `--start`: simulation start timestamp
+* `--seed`: RNG seed for reproducibility
 
-## 4. Configuration
+During simulation the tool appends synthetic updates, logs transient and malformed attempts, and periodically rolls up pages. A final snapshot page is taken before closing the journal.
 
-Add a `[demo]` section to your `Journal.toml`:
+## 3. state
 
-```toml
-[demo]
-start_date = "2005-01-01"
-end_date   = "2025-01-01"
-rate       = { real_seconds_per_month = 0.5 }
-seed       = 42
-users      = 10
-containers = 20
-leaf_rate  = { per_real_second = 10 }
-rollup     = { l0_size=1000, l1_time="1h", l2_time="1d" }
-snapshot   = { every="P1Y" }
+Print the reconstructed state of a container as-of a timestamp:
+
+```bash
+cj-demo state --container demoDB --as-of 2010-06-15T12:34:56Z
 ```
 
-* **start\_date/end\_date**: demo timeline bounds.
-* **rate**: acceleration factor.
-* **leaf\_rate**: leaves generated per tick.
-* **rollup** thresholds\*\*: override production defaults for demo.
-* **snapshot.every**: ISO‑8601 interval for snapshots.
+The command finds the highest rollup page covering the timestamp, applies finer patches, and outputs the resulting JSON map.
 
-## 5. Time Simulator
+## 4. revert
 
-* **Mode**: Batch vs. Live
+Rollback a real database to the ledger state at a given time:
 
-  * **Batch**: generate entire dataset in one run, then exit.
-  * **Live**: pace generation by sleeping `rate.real_seconds_per_month` per simulated month.
-* **Implementation**:
-
-  * Compute total months.
-  * Loop from `start_date` to `end_date`, advancing by one month per iteration.
-  * Within each month, spawn `leaf_rate.per_real_second * rate` leaves.
-
-## 6. Leaf Generator
-
-* For each tick:
-
-  1. Pick random user ID (`1..users`).
-  2. Pick random container ID (`1..containers`).
-  3. Generate content via lorem ipsum library.
-  4. Random delta type: CREATE / EDIT / COMMENT.
-  5. Call `create_leaf()` API.
-
-* **Traceability**: embed tags like `[demo:<month>:<seq>]` in content to aid tracing.
-
-## 7. Rollup Triggering
-
-* After each leaf insertion, check all configured levels:
-
-  * Size threshold for L0
-  * Time threshold for L1/L2
-* Invoke `seal_page(level)` when conditions are met.
-* Support **burstiness** by injecting random spikes in `leaf_rate`.
-
-## 8. Snapshot Generation
-
-* At each interval defined by `snapshot.every` (e.g., yearly):
-
-  * Call `create_snapshot(as_of_timestamp)`.
-  * Log snapshot hashes.
-  * Invoke **snap\_off** to archive lower rollup pages fully covered by this snapshot.
-
-## 9. Explorer Interface
-
-Provide two options:
-
-### 9.1 CLI Tool
-
-```
-journal-demo explore \
-  --container 5 \
-  --as-of 2013-06-01 \
-  --show-leafs \
-  --show-rollup-chain
+```bash
+cj-demo revert \
+  --container demoDB \
+  --as-of 2005-01-01T00:00:00Z \
+  --db-url postgres://…
 ```
 
-* Subcommands: `list-users`, `list-containers`, `get-state`, `trace-leaf <id>`.
+The revert operation reconstructs the state, wipes the target table, inserts each record inside a transaction and logs the revert as a special leaf.
 
-### 9.2 Minimal Web UI
+## 5. leaf & page
 
-* Simple HTML + JS app served on `localhost:4000`
-* Endpoints:
+The `leaf` and `page` subcommands inspect individual ledger entries.
 
-  * `/api/leafs?container=X&from=...&to=...`
-  * `/api/rollups?level=0&...`
-  * `/api/snapshots`
-* Visualize via D3 or plain tables.
+### leaf
 
-## 10. PostgreSQL Integration
+* **list** – list all leaves for a container
+* **show** – display one leaf with optional pretty JSON
 
-Demo Mode can run entirely using the file storage backend, but to better mimic a
-production deployment it should also insert each generated payload into a real
-PostgreSQL table. This allows the turnstile trigger in
-[`TURNSTILE.md`](TURNSTILE.md) to validate that the ledger and the database stay
-in sync.
+### page
 
-* Launch a dedicated Postgres instance (e.g. `journal_demo`). If `database_url`
-  is omitted the demo first tries Docker and falls back to an embedded server
-  downloaded at runtime. If both fail you'll be asked to install PostgreSQL
-  locally. To run manually use a small Docker Compose file:
+* **list** – list pages at a specific rollup level
+* **show** – dump a single page in raw or structured form
 
+## 6. nav
 
-  ```yaml
-  services:
-    db:
-      image: postgres:15
-      environment:
-        POSTGRES_DB: journal_demo
-        POSTGRES_USER: demo
-        POSTGRES_PASSWORD: demo
-      ports:
-        - "5432:5432"
+`nav` launches an interactive full‑screen browser using arrow keys to traverse leaves and pages. It shows payloads, hashes, and hierarchy relationships. Press `H` for help and `q` to quit.
+
+## 7. Rationale
+
+Demo Mode demonstrates CJ‑T’s guarantees without requiring a full application. Synthetic fields mimic a real schema, error parking shows auditability, and the state/revert commands prove you can time‑travel a database.
+
+Below is a **sketch of a “demo‐mode” CLI** that would let you:
+
+1. **Simulate** 20 years of adds/updates (with errors)
+2. **Query** or **revert** your “database” to any point in time
+3. **Inspect** leaves and pages on the fly (with an interactive navigator)
+
+You can use this as the blueprint for your `journal-demo` (or `cj-cli`) program.
+
+---
+
+## 1. Top-level CLI layout
+
+```
+cj-demo
+├─ simulate     # run a time-travel simulation
+├─ state        # show reconstructed DB state at T
+├─ revert       # rollback your real DB to state at T
+├─ leaf         # examine individual leaves
+├─ page         # examine individual pages
+└─ nav          # interactive navigator (arrow-keys)
+```
+
+---
+
+## 2. simulate: generate 50 fields & 20 years of history
+
+```bash
+cj-demo simulate \
+  --container demoDB \
+  --fields 50 \
+  --duration 20y \
+  --errors-parked 2 \
+  --errors-malformed 1 \
+  --start 2000-01-01T00:00:00Z \
+  --seed 42
+```
+
+* `--container`: journal “table” or namespace
+* `--fields`: number of fields (columns) to create
+* `--duration`: total simulated span (e.g. `20y`, `6m`, `100d`)
+* `--errors-parked`: simulate N transient errors (park + retry)
+* `--errors-malformed`: simulate N malformed payloads (park then drop)
+* `--start`: simulation start timestamp
+* `--seed`: RNG seed (for reproducibility)
+
+**What happens under the hood?**
+
+1. Generate `fields = ["field1",…"field50"]`.
+2. For each field, pick a random timestamp between `start` and `start + duration`, and call:
+
+   ```rust
+   let ticket = journal.turnstile_append(container, &payload, timestamp);
+   db.write_with_ticket(ticket)?; // simulate occasional errors
+   ```
+3. Periodically (e.g. every simulated day), roll up pages in the 7‐level hierarchy.
+4. When simulating an error:
+
+   * **Transient**: park in “parking\_lot” queue, retry later (logs both append and retry)
+   * **Malformed**: park then drop (log both the append and the drop decision)
+5. At the end, take one final snapshot page and close the journal.
+
+---
+
+## 3. state: get DB state as-of a timestamp
+
+```bash
+cj-demo state \
+  --container demoDB \
+  --as-of 2010-06-15T12:34:56Z
+```
+
+* Reconstructs your “table” by:
+
+  1. Finding the highest‐level page that covers `≤ as-of`
+  2. Applying any finer patches or leaves up to `as-of`
+  3. Printing the resulting JSON map
+* **Output**: pretty-printed JSON of `{"field1": "...", …}`
+
+---
+
+## 4. revert: roll your real database back
+
+```bash
+cj-demo revert \
+  --container demoDB \
+  --as-of 2005-01-01T00:00:00Z \
+  --db-url postgres://… 
+```
+
+* Uses the same reconstruction logic but then:
+
+  1. Opens a DB transaction
+  2. Deletes all rows in `your_table`
+  3. Inserts each reconstructed record
+  4. Commits and logs `revert` as a special CJ-T leaf
+* **Safety**: wraps in a transaction so you can abort if anything goes wrong.
+* **Implemented**: the `revert` command now connects to PostgreSQL, truncates the
+  target table, inserts each `field`/`value` pair from the reconstructed JSON, and
+  records the revert as a new leaf in the journal.
+
+---
+
+## 5. leaf & page: inspect individual entries
+
+### leaf subcommands
+
+* **List**:
+
+  ```bash
+  cj-demo leaf list --container demoDB
   ```
 
-* On startup, create a `transactions` table and install the trigger from the
-  sample in `TURNSTILE.md`.
-* Schema reset is controlled by the optional `--wipe` flag.
-* Use the `[demo]` section in `Journal.toml` to provide a database URL
-  (`postgres://demo:demo@localhost:5432/journal_demo`).
-* When generating leaves, insert a row into the table in addition to appending
-  to the journal. This makes it possible to search records forward or backward
-  directly in SQL and cross-check with reconstructed snapshots.
-* Support a `--persist` flag to keep data between runs.
+  Prints:
 
-## 11. Running the Demo
+  ```
+  ID   Timestamp               Hash
+  1    2000-02-10T14:22:05Z    a1b2c3…
+  2    2000-05-18T07:11:42Z    d4e5f6…
+  …
+  ```
+
+* **Show**:
+
+  ```bash
+  cj-demo leaf show \
+    --container demoDB \
+    --leaf-id 17 \
+    --pretty-json
+  ```
+
+  Outputs full payload, metadata, inclusion proof, etc.
+
+### page subcommands
+
+* **List** pages at a level:
+
+  ```bash
+  cj-demo page list \
+    --container demoDB \
+    --level 2
+  ```
+
+  Shows all pages of rollup‐level 2.
+
+* **Show** one page:
+
+  ```bash
+  cj-demo page show \
+    --container demoDB \
+    --page-id 42 \
+    --raw
+  ```
+
+  Dumps the Merkle root, child hashes, net patch (if any), and header bytes.
+
+---
+
+## 6. nav: interactive arrow-key explorer
+
+Run:
 
 ```bash
-# Batch mode:
-journal-demo run --mode batch
-
-# Live mode:
-journal-demo run --mode live --wipe
-
-# Explore:
-journal-demo explore --help
+cj-demo nav --container demoDB
 ```
 
-## 12. Tips & Best Practices
+You’ll get a full-screen CLI UI (using a library like `crossterm`):
 
-* **Seed control**: Fix `seed` for reproducible demos.
-* **Logging**: Use structured logs (JSON) with demo tags.
-* **Performance**: Increase DB pool size for high leaf rates.
-* **Monitoring**: Expose Prometheus metrics for pages/sec.
+```
+┌────────────────────────────────────┐
+│ Container: demoDB                 │
+│ Current: leaf #17 @ 2000-05-18…   │
+│ [← prev leaf] [→ next leaf]       │
+│ [↑ parent page] [↓ child page]    │
+└────────────────────────────────────┘
+ Payload: {"field7":"updated…"}
+  Hash: d4e5f6…
+  …
+```
 
-## 13. Scaffold Hints
+* **←/→** keys step through leaves in chronological order.
+* **↑/↓** keys move you up/down the page hierarchy (level 0 → level 1 → … → snapshot).
+* **q** to quit.
+* Press **H** for help on additional commands (search by hash, jump to timestamp, toggle raw header view).
 
-* Directory layout:
+---
 
-  * `demo/`
+## 7. Why this works for demonstrating CJ-T
 
-    * `mod.rs` (entrypoint)
-    * `config.rs` (parse `[demo]` section)
-    * `simulator.rs` (time loop)
-    * `generator.rs` (leaf & patch logic)
-    * `rollup.rs`, `snapshot.rs`
-    * `explorer.rs` (CLI & HTTP handlers)
-  * `demo/tests/` (end-to-end smoke tests)
+* **Synthetic fields** let you simulate a “real” database schema without needing Postgres.
+* **Turnstile integration** shows how CJ-T guarantees every write is logged (even on errors).
+* **Error parking** proves you get full auditing of retries and malformed payloads.
+* **State & revert** commands let you prove you can “time-travel” your DB.
+* **Inspect & nav** showcase the underlying ledger: leaves, rollups, Merkle proofs, and snapshots.
 
-* Use feature flags: `--features demo` to include this module only in dev builds.
+With these commands in place, you can **walk anyone through**:
 
-## 14. Extending Demo Mode
+1. “Here’s when each field was first created.”
+2. “Here’s the net effect after 5 years.”
+3. “Here’s every attempt (including errors) the system made.”
+4. “Let’s jump into the page hierarchy and verify the Merkle roots.”
+5. “Now revert the DB to exactly that snapshot.”
 
-* Add custom event patterns (e.g., mass forks/merges).
-* Support injecting failures to test recovery logic.
-* Integrate with UI frameworks for richer visualization.
+All from a **pure CLI**, no GUI needed—just your terminal, CJ-T, and a willingness to explore.
+
+## 8. Retro TUI Interface and Database Tools
+
+Demo Mode centers around a throwback text interface inspired by 1980s terminals. When you launch `cj-demo nav` the screen fills with a bordered layout reminiscent of classic bulletin board systems. Navigation relies entirely on the arrow keys:
+
+The TUI uses a blue background with white and gray text to evoke the feel of old bulletin board systems. It attempts to expand the terminal to at least 80×20 characters so the layout fits comfortably, but you can still resize the window to any larger dimension, including full screen.
+
+* **←/→** cycle through leaves in chronological order.
+* **↑/↓** move between parent and child pages.
+* **Enter** expands a focused item (leaf or page) to show raw JSON and metadata.
+* **H** opens a help pane describing available commands.
+* **Q** quits the browser.
+
+Inside the TUI you can perform common database operations without leaving the interface:
+
+* Press **S** to show the container state. The TUI prompts you for a timestamp
+  and displays a template like `YYYY-MM-DDTHH:MM:SSZ` so you know the expected
+  format.
+* Press **R** to revert a connected database to that state (confirmation required).
+* Press **F** to search leaves by hash or timestamp.
+* Press **D** to dump the current page or leaf to a file for offline analysis.
+
+This lightweight interface requires only a terminal emulator yet gives full access to the journal. Use it to demo time‑travel queries, verify Merkle proofs, and even roll your database backward and forward interactively.

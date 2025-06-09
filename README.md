@@ -440,20 +440,16 @@ The `FileStorage` backend provides methods for backing up the entire journal to 
 
 ## Demo Mode
 
-Use the optional `demo` feature to generate sample data and explore rollups and snapshots. Build and run the simulator with:
+Use the optional `demo` feature to experiment with the ledger and database.
+With `cj-demo` set as the default binary you can simply run:
 
 ```bash
-cargo run --features demo --bin journal-demo -- run --mode batch
+cargo run --features demo -- simulate --container demoDB
 ```
 
-The simulator reads the `[demo]` section from `Journal.toml`. Base application
-settings come from `config.toml` if present, otherwise defaults are used.
-
-If no database URL is provided, the demo first tries to start PostgreSQL using
-Docker. If Docker isn't available it falls back to an embedded server downloaded
-at runtime. Should both methods fail you'll be prompted to install PostgreSQL or
-provide `database_url` manually. See [DEMOMODE.md](DEMOMODE.md) for full
-configuration and PostgreSQL setup instructions.
+`cj-demo` offers additional subcommands such as `state`, `revert`, `leaf` and `page`.
+The tool reads configuration from the `[demo]` section in `Journal.toml`.
+See [DEMOMODE.md](DEMOMODE.md) for full instructions.
 
 
 ## WebAssembly Bindings

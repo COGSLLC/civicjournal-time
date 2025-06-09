@@ -2,6 +2,7 @@
 name = "civicjournal-time"
 version = "0.1.0"
 edition = "2021"
+default-run = "cj-demo"
 description = "A hierarchical time-series journal system using merkle-chains and pages for efficient historical state management"
 license = "AGPL-3.0-only"
 
@@ -65,6 +66,8 @@ clap = { version = "4.4", features = ["derive"], optional = true }
 rand = { version = "0.8", optional = true }
 fake = { version = "2.7", features = ["derive", "chrono"], optional = true }
 pg-embed = { version = "0.7.1", optional = true, default-features = false, features = ["rt_tokio_migrate"] }
+crossterm = { version = "0.27", optional = true }
+tui = { version = "0.19", default-features = false, features = ["crossterm"], optional = true }
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 wasm-bindgen-futures = "0.4"
 
@@ -108,11 +111,11 @@ crypto = ["ring"]
 concurrent = ["parking_lot"]
 
 # Demo mode utilities and PostgreSQL driver
-demo = ["async", "async_api", "logging", "dep:tokio-postgres", "dep:clap", "dep:fake", "dep:rand", "dep:pg-embed"]
+demo = ["async", "async_api", "logging", "dep:tokio-postgres", "dep:clap", "dep:fake", "dep:rand", "dep:pg-embed", "dep:crossterm", "dep:tui"]
 
 [[bin]]
-name = "journal-demo"
-path = "src/bin/journal-demo.rs"
+name = "cj-demo"
+path = "src/bin/cj-demo.rs"
 required-features = ["demo"]
 
 [[bench]]
