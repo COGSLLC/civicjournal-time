@@ -441,10 +441,10 @@ The `FileStorage` backend provides methods for backing up the entire journal to 
 ## Demo Mode
 
 Use the optional `demo` feature to experiment with the ledger and database.
-Run the new CLI with:
+With `cj-demo` set as the default binary you can simply run:
 
 ```bash
-cargo run --features demo --bin cj-demo -- simulate --container demoDB
+cargo run --features demo -- simulate --container demoDB
 ```
 
 `cj-demo` offers additional subcommands such as `state`, `revert`, `leaf` and `page`.
