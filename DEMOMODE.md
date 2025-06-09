@@ -182,6 +182,9 @@ cj-demo revert \
   3. Inserts each reconstructed record
   4. Commits and logs `revert` as a special CJ-T leaf
 * **Safety**: wraps in a transaction so you can abort if anything goes wrong.
+* **Implemented**: the `revert` command now connects to PostgreSQL, truncates the
+  target table, inserts each `field`/`value` pair from the reconstructed JSON, and
+  records the revert as a new leaf in the journal.
 
 ---
 
@@ -286,3 +289,26 @@ With these commands in place, you can **walk anyone through**:
 5. “Now revert the DB to exactly that snapshot.”
 
 All from a **pure CLI**, no GUI needed—just your terminal, CJ-T, and a willingness to explore.
+
+## 8. Retro TUI Interface and Database Tools
+
+Demo Mode centers around a throwback text interface inspired by 1980s terminals. When you launch `cj-demo nav` the screen fills with a bordered layout reminiscent of classic bulletin board systems. Navigation relies entirely on the arrow keys:
+
+The TUI uses a blue background with white and gray text to evoke the feel of old bulletin board systems. It attempts to expand the terminal to at least 80×20 characters so the layout fits comfortably, but you can still resize the window to any larger dimension, including full screen.
+
+* **←/→** cycle through leaves in chronological order.
+* **↑/↓** move between parent and child pages.
+* **Enter** expands a focused item (leaf or page) to show raw JSON and metadata.
+* **H** opens a help pane describing available commands.
+* **Q** quits the browser.
+
+Inside the TUI you can perform common database operations without leaving the interface:
+
+* Press **S** to show the container state. The TUI prompts you for a timestamp
+  and displays a template like `YYYY-MM-DDTHH:MM:SSZ` so you know the expected
+  format.
+* Press **R** to revert a connected database to that state (confirmation required).
+* Press **F** to search leaves by hash or timestamp.
+* Press **D** to dump the current page or leaf to a file for offline analysis.
+
+This lightweight interface requires only a terminal emulator yet gives full access to the journal. Use it to demo time‑travel queries, verify Merkle proofs, and even roll your database backward and forward interactively.

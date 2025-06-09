@@ -1923,7 +1923,11 @@ fn create_cascading_test_config_and_manager() -> (TimeHierarchyManager, Arc<Memo
             high_age_limit  // l1_max_age_secs
         );
 
-        let time_base = Utc::now();
+        // Use a fixed timestamp so the test is deterministic and doesn't
+        // accidentally span a rollup window when the wall clock is near a
+        // boundary. Otherwise the hour might roll over between `leaf1` and
+        // `leaf2`, causing a new L1 page to be created and the test to fail.
+        let time_base = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
 
         // Leaf 1 -> L0P0 (ID 0) finalizes -> L1P1 (ID 1) gets 1st thrall.
         let leaf1 = JournalLeaf::new(time_base, None, "parent_accum_container".to_string(), json!({"id": "L0P0_leaf1"})).unwrap();
