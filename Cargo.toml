@@ -2,6 +2,7 @@
 name = "civicjournal-time"
 version = "0.1.0"
 edition = "2021"
+default-run = "cj-demo"
 description = "A hierarchical time-series journal system using merkle-chains and pages for efficient historical state management"
 license = "AGPL-3.0-only"
 

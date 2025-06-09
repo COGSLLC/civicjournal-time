@@ -13,7 +13,7 @@ use tokio_postgres::NoTls;
 use rand::{SeedableRng, Rng};
 use rand::rngs::StdRng;
 use fake::{Fake, faker::lorem::en::Sentence};
-use serde_json::{json, Value};
+use serde_json::json;
 use hex;
 use std::io::{self, Write};
 use std::time::Duration as StdDuration;
@@ -155,14 +155,14 @@ pub async fn run() -> CJResult<()> {
 }
 
 fn parse_duration_spec(spec: &str) -> CJResult<Duration> {
-    if spec.len() < 2 { return Err(crate::CJError::invalid_input("invalid duration".into())); }
+    if spec.len() < 2 { return Err(crate::CJError::invalid_input("invalid duration")); }
     let (num_str, unit) = spec.split_at(spec.len()-1);
-    let n: i64 = num_str.parse().map_err(|_| crate::CJError::invalid_input("invalid duration".into()))?;
+    let n: i64 = num_str.parse().map_err(|_| crate::CJError::invalid_input("invalid duration"))?;
     let dur = match unit {
         "y" => Duration::days(n * 365),
         "m" => Duration::days(n * 30),
         "d" => Duration::days(n),
-        _ => return Err(crate::CJError::invalid_input("invalid duration".into())),
+        _ => return Err(crate::CJError::invalid_input("invalid duration")),
     };
     Ok(dur)
 }
@@ -194,7 +194,7 @@ async fn state_cmd(journal: &Journal, container: &str, as_of: &str) -> CJResult<
 async fn revert_cmd(journal: &Journal, container: &str, as_of: &str, db_url: &str) -> CJResult<()> {
     let at = as_of.parse::<DateTime<Utc>>().map_err(|e| crate::CJError::new(e.to_string()))?;
     let state = journal.reconstruct_container_state(container, at).await?;
-    let (client, connection) = tokio_postgres::connect(db_url, NoTls).await.map_err(|e| crate::CJError::new(e.to_string()))?;
+    let (mut client, connection) = tokio_postgres::connect(db_url, NoTls).await.map_err(|e| crate::CJError::new(e.to_string()))?;
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("connection error: {}", e);
@@ -353,7 +353,7 @@ fn read_line(prompt: &str) -> io::Result<String> {
     Ok(input.trim().to_string())
 }
 
-fn show_help(stdout: &mut io::Stdout) -> crossterm::Result<()> {
+fn show_help(stdout: &mut io::Stdout) -> io::Result<()> {
     execute!(stdout, Clear(ClearType::All), cursor::MoveTo(0,0), SetForegroundColor(Color::White))?;
     writeln!(stdout, "Navigation Help")?;
     execute!(stdout, SetForegroundColor(Color::Grey))?;
