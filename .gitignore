@@ -13,6 +13,9 @@ Cargo.lock
 .vscode/
 .windsurf/
 
+# Data directory (contains demo data)
+.data/
+
 # OS-specific files
 .DS_Store
 Thumbs.db

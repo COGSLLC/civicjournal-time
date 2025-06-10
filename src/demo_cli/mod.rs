@@ -598,6 +598,7 @@ fn render_menu(stdout: &mut io::Stdout) -> io::Result<()> {
     execute!(stdout, SetForegroundColor(Color::White))?;
     stdout.flush()?;
     Ok(())
+
 }
 
 fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
@@ -637,6 +638,7 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
 
     if ts.append("{", ts_time.timestamp() as u64).is_err() {
         journal.append_leaf(ts_time + Duration::seconds(1), None, container.to_string(), json!({"log":"malformed packet"})).await?;
+
     }
 
     Ok(())
