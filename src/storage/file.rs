@@ -772,6 +772,7 @@ mod tests {
     
     use crate::core::leaf::JournalLeaf;
     use crate::core::page::JournalPage;
+    use crate::types::RollupContentType;
     use crate::storage::StorageBackend;
 
 
@@ -854,9 +855,23 @@ mod tests {
         // 3. Create and store an L1 page (should be ignored by load_leaf_by_hash)
         let mut page1_1 = JournalPage::new(1, None, leaf_data_4.timestamp, &page_config);
         page1_1.page_id = 3; // Manually set for test predictability
-        // For L1, we add thrall hashes. load_leaf_by_hash only looks for leaves in L0 pages.
-        // So, adding page0_1's hash as a thrall to L1 page.
-        page1_1.add_thrall_hash(page0_1.page_hash, page0_1.end_time);
+        // Populate the page based on the configured content type. load_leaf_by_hash
+        // only scans L0 pages, so any content here should be ignored.
+        match page_config.time_hierarchy.levels[1].rollup_config.content_type {
+            RollupContentType::ChildHashes => {
+                page1_1.add_thrall_hash(page0_1.page_hash, page0_1.end_time);
+            }
+            RollupContentType::NetPatches => {
+                let mut patch = std::collections::HashMap::new();
+                patch.insert(
+                    "dummy_field".to_string(),
+                    serde_json::Value::String("dummy".to_string()),
+                );
+                let mut patch_map = std::collections::HashMap::new();
+                patch_map.insert("obj1".to_string(), patch);
+                page1_1.merge_net_patches(patch_map, leaf_data_4.timestamp);
+            }
+        }
         page1_1.recalculate_merkle_root_and_page_hash();
         storage.store_page(&page1_1).await.expect("Failed to store page1_1");
 

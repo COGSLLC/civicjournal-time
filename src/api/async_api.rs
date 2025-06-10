@@ -243,6 +243,11 @@ impl Journal {
             .await
             .map_err(|e| CJError::new(format!("Snapshot error: {:?}", e)))
     }
+
+    /// Resets the stored hash of the most recently appended leaf.
+    pub async fn reset_last_leaf_hash(&self) {
+        *self.last_leaf_hash.lock().await = None;
+    }
 }
 
 #[cfg(feature = "async_api")]

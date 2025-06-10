@@ -173,6 +173,11 @@ impl Journal {
             .block_on(self.query.get_page_chain_integrity(level, from, to))
             .map_err(Into::into)
     }
+
+    /// Resets the stored hash of the most recently appended leaf.
+    pub fn reset_last_leaf_hash(&self) {
+        *self.last_leaf_hash.lock().unwrap() = None;
+    }
 }
 
 // pub struct SyncApi {

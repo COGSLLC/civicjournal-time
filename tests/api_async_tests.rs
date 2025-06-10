@@ -242,6 +242,36 @@ async fn test_auto_prev_hash_linking() {
 }
 
 #[tokio::test]
+async fn test_reset_last_leaf_hash() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let cfg = get_test_config();
+    let journal = Journal::new(cfg).await.expect("init");
+    let ts = Utc::now();
+    journal
+        .append_leaf(ts, None, "reset".into(), json!({"v":1}))
+        .await
+        .unwrap();
+    journal.reset_last_leaf_hash().await;
+    let h2 = match journal
+        .append_leaf(
+            ts + Duration::milliseconds(1),
+            None,
+            "reset".into(),
+            json!({"v":2}),
+        )
+        .await
+        .unwrap()
+    {
+        PageContentHash::LeafHash(h) => h,
+        _ => panic!(),
+    };
+    journal.apply_retention_policies().await.unwrap();
+    let proof = journal.get_leaf_inclusion_proof(&h2).await.unwrap();
+    assert_eq!(proof.leaf.prev_hash, None);
+}
+
+#[tokio::test]
 async fn test_async_query_methods() {
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();

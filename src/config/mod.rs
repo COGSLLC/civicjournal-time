@@ -298,7 +298,10 @@ impl Default for Config {
                     TimeLevel {
                         name: "minute".to_string(),
                         duration_seconds: 60,
-                        rollup_config: LevelRollupConfig::default(),
+                        rollup_config: LevelRollupConfig {
+                            content_type: RollupContentType::NetPatches,
+                            ..LevelRollupConfig::default()
+                        },
                         retention_policy: None,
                     },
                     TimeLevel {
