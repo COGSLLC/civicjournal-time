@@ -1,16 +1,17 @@
 #![cfg(feature = "async_api")]
 
+use chrono::{Duration, Utc};
 use civicjournal_time::api::async_api::{Journal, PageContentHash};
-use civicjournal_time::config::{Config, TimeLevel, LevelRollupConfig};
-use civicjournal_time::types::time::RollupContentType;
-use civicjournal_time::{StorageType, CJError};
+use civicjournal_time::config::{Config, LevelRollupConfig, TimeLevel};
+use civicjournal_time::core::time_manager::TimeHierarchyManager;
 use civicjournal_time::storage::memory::MemoryStorage;
 use civicjournal_time::storage::StorageBackend;
-use civicjournal_time::core::time_manager::TimeHierarchyManager;
-use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids, get_test_config};
-use chrono::{Utc, Duration};
+use civicjournal_time::test_utils::{get_test_config, reset_global_ids, SHARED_TEST_ID_MUTEX};
+use civicjournal_time::types::time::RollupContentType;
+use civicjournal_time::{CJError, StorageType};
 use serde_json::json;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 fn rollup_config() -> Config {
     let mut cfg = Config::default();
@@ -69,7 +70,10 @@ async fn test_append_single_leaf_returns_hash() {
     let cfg = get_test_config();
     let journal = Journal::new(cfg).await.expect("journal init");
     let ts = Utc::now();
-    let res = journal.append_leaf(ts, None, "c1".into(), json!({"a":1})).await.unwrap();
+    let res = journal
+        .append_leaf(ts, None, "c1".into(), json!({"a":1}))
+        .await
+        .unwrap();
     match res {
         PageContentHash::LeafHash(h) => assert_eq!(h.len(), 32),
         _ => panic!("Expected LeafHash"),
@@ -83,9 +87,28 @@ async fn test_append_multiple_leaves_unique_hashes() {
     let cfg = get_test_config();
     let journal = Journal::new(cfg).await.expect("journal init");
     let t0 = Utc::now();
-    let h1 = journal.append_leaf(t0, None, "c1".into(), json!({"v":1})).await.unwrap();
-    let h2 = journal.append_leaf(t0 + Duration::milliseconds(1), None, "c1".into(), json!({"v":2})).await.unwrap();
-    let h3 = journal.append_leaf(t0 + Duration::milliseconds(2), None, "c1".into(), json!({"v":3})).await.unwrap();
+    let h1 = journal
+        .append_leaf(t0, None, "c1".into(), json!({"v":1}))
+        .await
+        .unwrap();
+    let h2 = journal
+        .append_leaf(
+            t0 + Duration::milliseconds(1),
+            None,
+            "c1".into(),
+            json!({"v":2}),
+        )
+        .await
+        .unwrap();
+    let h3 = journal
+        .append_leaf(
+            t0 + Duration::milliseconds(2),
+            None,
+            "c1".into(),
+            json!({"v":3}),
+        )
+        .await
+        .unwrap();
     assert_ne!(h1, h2);
     assert_ne!(h2, h3);
     assert_ne!(h1, h3);
@@ -96,15 +119,27 @@ async fn test_append_leaf_storage_error() {
     let _guard = SHARED_TEST_ID_MUTEX.lock().await;
     reset_global_ids();
     let mut cfg = get_test_config().clone();
-    cfg.time_hierarchy.levels[0].rollup_config.max_items_per_page = 1;
+    cfg.time_hierarchy.levels[0]
+        .rollup_config
+        .max_items_per_page = 1;
     let mem = MemoryStorage::new();
     mem.set_fail_on_store(0, None);
     let storage: Arc<dyn StorageBackend> = Arc::new(mem);
-    let manager = Arc::new(TimeHierarchyManager::new(Arc::new(cfg.clone()), storage.clone()));
-    let query = civicjournal_time::query::QueryEngine::new(storage.clone(), manager.clone(), Arc::new(cfg));
-    let journal = Journal { manager, query };
+    let manager = Arc::new(TimeHierarchyManager::new(
+        Arc::new(cfg.clone()),
+        storage.clone(),
+    ));
+    let query =
+        civicjournal_time::query::QueryEngine::new(storage.clone(), manager.clone(), Arc::new(cfg));
+    let journal = Journal {
+        manager,
+        query,
+        last_leaf_hash: Arc::new(Mutex::new(None)),
+    };
     let ts = Utc::now();
-    let res = journal.append_leaf(ts, None, "err".into(), json!({"x":1})).await;
+    let res = journal
+        .append_leaf(ts, None, "err".into(), json!({"x":1}))
+        .await;
     assert!(matches!(res, Err(CJError::StorageError(_))));
 }
 
@@ -115,10 +150,28 @@ async fn test_rollup_trigger() {
     let cfg: &'static Config = Box::leak(Box::new(rollup_config()));
     let journal = Journal::new(cfg).await.expect("init");
     let base = Utc::now();
-    journal.append_leaf(base, None, "r1".into(), json!({"v":1})).await.unwrap();
-    journal.append_leaf(base + Duration::milliseconds(1), None, "r1".into(), json!({"v":2})).await.unwrap();
+    journal
+        .append_leaf(base, None, "r1".into(), json!({"v":1}))
+        .await
+        .unwrap();
+    journal
+        .append_leaf(
+            base + Duration::milliseconds(1),
+            None,
+            "r1".into(),
+            json!({"v":2}),
+        )
+        .await
+        .unwrap();
     // Third append should roll up first two pages
-    let res = journal.append_leaf(base + Duration::milliseconds(2), None, "r1".into(), json!({"v":3})).await;
+    let res = journal
+        .append_leaf(
+            base + Duration::milliseconds(2),
+            None,
+            "r1".into(),
+            json!({"v":3}),
+        )
+        .await;
     assert!(res.is_ok());
 }
 
@@ -129,7 +182,13 @@ async fn test_get_page_not_found() {
     let cfg = get_test_config();
     let journal = Journal::new(cfg).await.expect("init");
     let res = journal.get_page(0, 42).await;
-    assert!(matches!(res, Err(CJError::PageNotFound { level: 0, page_id: 42 })));
+    assert!(matches!(
+        res,
+        Err(CJError::PageNotFound {
+            level: 0,
+            page_id: 42
+        })
+    ));
 }
 
 #[tokio::test]
@@ -139,11 +198,77 @@ async fn test_get_page_existing() {
     let cfg = get_test_config();
     let journal = Journal::new(cfg).await.expect("init");
     let ts = Utc::now();
-    journal.append_leaf(ts, None, "p1".into(), json!({"v":1})).await.unwrap();
+    journal
+        .append_leaf(ts, None, "p1".into(), json!({"v":1}))
+        .await
+        .unwrap();
     journal.apply_retention_policies().await.unwrap();
     let page = journal.get_page(0, 0).await.expect("page");
     assert_eq!(page.level, 0);
     assert_eq!(page.page_id, 0);
+}
+
+#[tokio::test]
+async fn test_auto_prev_hash_linking() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let cfg = get_test_config();
+    let journal = Journal::new(cfg).await.expect("init");
+    let ts = Utc::now();
+    let h1 = match journal
+        .append_leaf(ts, None, "auto".into(), json!({"v":1}))
+        .await
+        .unwrap()
+    {
+        PageContentHash::LeafHash(h) => h,
+        _ => panic!(),
+    };
+    let h2 = match journal
+        .append_leaf(
+            ts + Duration::milliseconds(1),
+            None,
+            "auto".into(),
+            json!({"v":2}),
+        )
+        .await
+        .unwrap()
+    {
+        PageContentHash::LeafHash(h) => h,
+        _ => panic!(),
+    };
+    journal.apply_retention_policies().await.unwrap();
+    let proof = journal.get_leaf_inclusion_proof(&h2).await.unwrap();
+    assert_eq!(proof.leaf.prev_hash, Some(h1));
+}
+
+#[tokio::test]
+async fn test_reset_last_leaf_hash() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+    let cfg = get_test_config();
+    let journal = Journal::new(cfg).await.expect("init");
+    let ts = Utc::now();
+    journal
+        .append_leaf(ts, None, "reset".into(), json!({"v":1}))
+        .await
+        .unwrap();
+    journal.reset_last_leaf_hash().await;
+    let h2 = match journal
+        .append_leaf(
+            ts + Duration::milliseconds(1),
+            None,
+            "reset".into(),
+            json!({"v":2}),
+        )
+        .await
+        .unwrap()
+    {
+        PageContentHash::LeafHash(h) => h,
+        _ => panic!(),
+    };
+    journal.apply_retention_policies().await.unwrap();
+    let proof = journal.get_leaf_inclusion_proof(&h2).await.unwrap();
+    assert_eq!(proof.leaf.prev_hash, None);
 }
 
 #[tokio::test]
@@ -154,21 +279,57 @@ async fn test_async_query_methods() {
     let journal = Journal::new(cfg).await.expect("init");
     let base = Utc::now();
     // append three leaves
-    let h1 = match journal.append_leaf(base, None, "c1".into(), json!({"a":1})).await.unwrap() { PageContentHash::LeafHash(h) => h, _ => panic!() };
-    let h2 = match journal.append_leaf(base + Duration::seconds(1), Some(PageContentHash::LeafHash(h1)), "c1".into(), json!({"b":2})).await.unwrap() { PageContentHash::LeafHash(h) => h, _ => panic!() };
-    let _h3 = journal.append_leaf(base + Duration::seconds(2), Some(PageContentHash::LeafHash(h2)), "c1".into(), json!({"c":3})).await.unwrap();
+    let h1 = match journal
+        .append_leaf(base, None, "c1".into(), json!({"a":1}))
+        .await
+        .unwrap()
+    {
+        PageContentHash::LeafHash(h) => h,
+        _ => panic!(),
+    };
+    let h2 = match journal
+        .append_leaf(
+            base + Duration::seconds(1),
+            Some(PageContentHash::LeafHash(h1)),
+            "c1".into(),
+            json!({"b":2}),
+        )
+        .await
+        .unwrap()
+    {
+        PageContentHash::LeafHash(h) => h,
+        _ => panic!(),
+    };
+    let _h3 = journal
+        .append_leaf(
+            base + Duration::seconds(2),
+            Some(PageContentHash::LeafHash(h2)),
+            "c1".into(),
+            json!({"c":3}),
+        )
+        .await
+        .unwrap();
     journal.apply_retention_policies().await.unwrap();
 
     let proof = journal.get_leaf_inclusion_proof(&h2).await.unwrap();
     assert_eq!(proof.leaf.leaf_hash, h2);
-    let state = journal.reconstruct_container_state("c1", base + Duration::seconds(1)).await.unwrap();
+    let state = journal
+        .reconstruct_container_state("c1", base + Duration::seconds(1))
+        .await
+        .unwrap();
     assert_eq!(state.state_data["a"], 1);
     assert_eq!(state.state_data["b"], 2);
 
-    let report = journal.get_delta_report("c1", base, base + Duration::seconds(3)).await.unwrap();
+    let report = journal
+        .get_delta_report("c1", base, base + Duration::seconds(3))
+        .await
+        .unwrap();
     assert_eq!(report.deltas.len(), 3);
 
-    let integrity = journal.get_page_chain_integrity(0, Some(0), Some(2)).await.unwrap();
+    let integrity = journal
+        .get_page_chain_integrity(0, Some(0), Some(2))
+        .await
+        .unwrap();
     assert_eq!(integrity.len(), 2);
     println!("integrity: {:?}", integrity);
     assert!(integrity.iter().all(|r| r.is_valid));

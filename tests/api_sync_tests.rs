@@ -1,15 +1,15 @@
+use chrono::Utc;
 use civicjournal_time::api::sync_api::Journal;
 use civicjournal_time::config::Config;
-use civicjournal_time::test_utils::get_test_config;
-use civicjournal_time::error::CJError;
-use civicjournal_time::StorageType;
-use tempfile::tempdir;
-use chrono::Utc;
-use serde_json::json;
 use civicjournal_time::core::leaf::JournalLeaf;
 use civicjournal_time::core::page::{JournalPage, PageContent};
+use civicjournal_time::error::CJError;
 use civicjournal_time::storage::{file::FileStorage, StorageBackend};
-use civicjournal_time::test_utils::{SHARED_TEST_ID_MUTEX, reset_global_ids};
+use civicjournal_time::test_utils::get_test_config;
+use civicjournal_time::test_utils::{reset_global_ids, SHARED_TEST_ID_MUTEX};
+use civicjournal_time::StorageType;
+use serde_json::json;
+use tempfile::tempdir;
 
 #[test]
 fn test_sync_leaf_inclusion_proof_not_found() {
@@ -51,7 +51,13 @@ fn test_sync_get_page_not_found() {
     let cfg: &'static Config = get_test_config();
     let journal = Journal::new(cfg).expect("journal init");
     let res = journal.get_page(0, 99);
-    assert!(matches!(res, Err(CJError::PageNotFound { level: 0, page_id: 99 })));
+    assert!(matches!(
+        res,
+        Err(CJError::PageNotFound {
+            level: 0,
+            page_id: 99
+        })
+    ));
 }
 
 #[test]
@@ -93,13 +99,8 @@ fn test_sync_get_page_existing() {
             cfg.compression.clone(),
         ))
         .expect("fs new");
-    let page = civicjournal_time::core::page::JournalPage::new_with_id(
-        0,
-        0,
-        None,
-        Utc::now(),
-        &cfg,
-    );
+    let page =
+        civicjournal_time::core::page::JournalPage::new_with_id(0, 0, None, Utc::now(), &cfg);
     rt.block_on(storage.store_page(&page)).expect("store page");
 
     let journal = Journal::new(Box::leak(Box::new(cfg))).expect("journal init");
@@ -120,21 +121,35 @@ fn test_sync_leaf_inclusion_proof_success() {
     reset_global_ids();
 
     let storage = rt
-        .block_on(FileStorage::new(&cfg.storage.base_path, cfg.compression.clone()))
+        .block_on(FileStorage::new(
+            &cfg.storage.base_path,
+            cfg.compression.clone(),
+        ))
         .expect("fs new");
 
     let t0 = Utc::now();
     let leaf1 = JournalLeaf::new(t0, None, "c1".into(), json!({"a":1})).unwrap();
     let leaf2 = JournalLeaf::new(t0, Some(leaf1.leaf_hash), "c1".into(), json!({"b":2})).unwrap();
     let mut page = JournalPage::new(0, None, t0, &cfg);
-    if let PageContent::Leaves(ref mut v) = page.content { v.push(leaf1.clone()); v.push(leaf2.clone()); }
+    if let PageContent::Leaves(ref mut v) = page.content {
+        v.push(leaf1.clone());
+        v.push(leaf2.clone());
+    }
     page.recalculate_merkle_root_and_page_hash();
     rt.block_on(storage.store_page(&page)).expect("store page");
 
     let journal = Journal::new(Box::leak(Box::new(cfg))).expect("journal init");
-    let proof = journal.get_leaf_inclusion_proof(&leaf2.leaf_hash).expect("proof");
+    let proof = journal
+        .get_leaf_inclusion_proof(&leaf2.leaf_hash)
+        .expect("proof");
     assert_eq!(proof.leaf.leaf_hash, leaf2.leaf_hash);
     assert_eq!(proof.page_id, page.page_id);
     assert_eq!(proof.level, page.level);
 }
 
+#[test]
+fn test_sync_reset_last_leaf_hash() {
+    let cfg: &'static Config = get_test_config();
+    let journal = Journal::new(cfg).expect("journal init");
+    journal.reset_last_leaf_hash();
+}

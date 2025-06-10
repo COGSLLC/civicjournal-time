@@ -5,9 +5,9 @@ use crate::core::page::JournalPage;
 use crate::core::time_manager::TimeHierarchyManager;
 use crate::error::{CJError, Result as CJResult};
 use crate::storage::create_storage_backend;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use chrono::{DateTime, Utc};
 
 /// Provides a synchronous API for interacting with the CivicJournal.
 #[derive(Debug)]
@@ -15,6 +15,7 @@ pub struct Journal {
     manager: Arc<TimeHierarchyManager>,
     query: crate::query::QueryEngine,
     rt: Runtime, // Tokio runtime for executing async operations
+    last_leaf_hash: Arc<std::sync::Mutex<Option<[u8; 32]>>>,
 }
 
 impl Journal {
@@ -29,16 +30,31 @@ impl Journal {
     /// # Panics
     /// Panics if a Tokio runtime cannot be created or if storage backend creation fails.
     pub fn new(config: &'static Config) -> CJResult<Self> {
-        let rt = Runtime::new().map_err(|e| CJError::new(format!("Failed to create Tokio runtime: {}", e)))?;
+        let rt = Runtime::new()
+            .map_err(|e| CJError::new(format!("Failed to create Tokio runtime: {}", e)))?;
 
-        let storage_backend = rt.block_on(create_storage_backend(config))
+        let storage_backend = rt
+            .block_on(create_storage_backend(config))
             .map_err(|e| CJError::new(format!("Failed to create storage backend: {}", e)))?;
 
         let storage_arc: Arc<dyn crate::storage::StorageBackend> = Arc::from(storage_backend);
-        let manager = Arc::new(TimeHierarchyManager::new(Arc::new(config.clone()), storage_arc.clone()));
-        let query = crate::query::QueryEngine::new(storage_arc.clone(), manager.clone(), Arc::new(config.clone()));
+        let manager = Arc::new(TimeHierarchyManager::new(
+            Arc::new(config.clone()),
+            storage_arc.clone(),
+        ));
+        let query = crate::query::QueryEngine::new(
+            storage_arc.clone(),
+            manager.clone(),
+            Arc::new(config.clone()),
+        );
+        let last_leaf_hash = Arc::new(std::sync::Mutex::new(None));
 
-        Ok(Self { manager, query, rt })
+        Ok(Self {
+            manager,
+            query,
+            rt,
+            last_leaf_hash,
+        })
     }
 
     /// Retrieves a specific `JournalPage` by its level and ID.
@@ -55,7 +71,10 @@ impl Journal {
     /// Returns `CJError::PageNotFound` if the page does not exist.
     /// Returns `CJError::StorageError` if there was an issue loading from storage.
     pub fn get_page(&self, level: u8, page_id: u64) -> CJResult<JournalPage> {
-        match self.rt.block_on(self.manager.load_page_from_storage(level, page_id)) {
+        match self
+            .rt
+            .block_on(self.manager.load_page_from_storage(level, page_id))
+        {
             Ok(Some(page)) => Ok(page),
             Ok(None) => Err(CJError::PageNotFound { level, page_id }),
             Err(e) => {
@@ -71,8 +90,13 @@ impl Journal {
     ///
     /// This is a blocking wrapper around [`QueryEngine::get_leaf_inclusion_proof`]
     /// for use in synchronous contexts.
-    pub fn get_leaf_inclusion_proof(&self, leaf_hash: &[u8; 32]) -> CJResult<crate::query::types::LeafInclusionProof> {
-        self.rt.block_on(self.query.get_leaf_inclusion_proof(leaf_hash)).map_err(Into::into)
+    pub fn get_leaf_inclusion_proof(
+        &self,
+        leaf_hash: &[u8; 32],
+    ) -> CJResult<crate::query::types::LeafInclusionProof> {
+        self.rt
+            .block_on(self.query.get_leaf_inclusion_proof(leaf_hash))
+            .map_err(Into::into)
     }
 
     /// Retrieves a leaf inclusion proof with an optional page hint to speed up lookups.
@@ -84,20 +108,35 @@ impl Journal {
         leaf_hash: &[u8; 32],
         page_id_hint: Option<(u8, u64)>,
     ) -> CJResult<crate::query::types::LeafInclusionProof> {
-        self
-            .rt
-            .block_on(self.query.get_leaf_inclusion_proof_with_hint(leaf_hash, page_id_hint))
+        self.rt
+            .block_on(
+                self.query
+                    .get_leaf_inclusion_proof_with_hint(leaf_hash, page_id_hint),
+            )
             .map_err(Into::into)
     }
 
     /// Reconstructs the state of a container at the specified timestamp.
-    pub fn reconstruct_container_state(&self, container_id: &str, at: DateTime<Utc>) -> CJResult<crate::query::types::ReconstructedState> {
-        self.rt.block_on(self.query.reconstruct_container_state(container_id, at)).map_err(Into::into)
+    pub fn reconstruct_container_state(
+        &self,
+        container_id: &str,
+        at: DateTime<Utc>,
+    ) -> CJResult<crate::query::types::ReconstructedState> {
+        self.rt
+            .block_on(self.query.reconstruct_container_state(container_id, at))
+            .map_err(Into::into)
     }
 
     /// Retrieves all deltas for a container between two timestamps.
-    pub fn get_delta_report(&self, container_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> CJResult<crate::query::types::DeltaReport> {
-        self.rt.block_on(self.query.get_delta_report(container_id, from, to)).map_err(Into::into)
+    pub fn get_delta_report(
+        &self,
+        container_id: &str,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> CJResult<crate::query::types::DeltaReport> {
+        self.rt
+            .block_on(self.query.get_delta_report(container_id, from, to))
+            .map_err(Into::into)
     }
 
     /// Retrieves a paginated delta report for a container between two timestamps.
@@ -112,9 +151,11 @@ impl Journal {
         offset: usize,
         limit: usize,
     ) -> CJResult<crate::query::types::DeltaReport> {
-        self
-            .rt
-            .block_on(self.query.get_delta_report_paginated(container_id, from, to, offset, limit))
+        self.rt
+            .block_on(
+                self.query
+                    .get_delta_report_paginated(container_id, from, to, offset, limit),
+            )
             .map_err(Into::into)
     }
 
@@ -122,14 +163,26 @@ impl Journal {
     ///
     /// Returns a list of [`PageIntegrityReport`] entries describing any
     /// inconsistencies.
-    pub fn get_page_chain_integrity(&self, level: u8, from: Option<u64>, to: Option<u64>) -> CJResult<Vec<crate::query::types::PageIntegrityReport>> {
-        self.rt.block_on(self.query.get_page_chain_integrity(level, from, to)).map_err(Into::into)
+    pub fn get_page_chain_integrity(
+        &self,
+        level: u8,
+        from: Option<u64>,
+        to: Option<u64>,
+    ) -> CJResult<Vec<crate::query::types::PageIntegrityReport>> {
+        self.rt
+            .block_on(self.query.get_page_chain_integrity(level, from, to))
+            .map_err(Into::into)
+    }
+
+    /// Resets the stored hash of the most recently appended leaf.
+    pub fn reset_last_leaf_hash(&self) {
+        *self.last_leaf_hash.lock().unwrap() = None;
     }
 }
 
 // pub struct SyncApi {
-    // storage: Box<dyn StorageBackend>,
-    // time_hierarchy: TimeHierarchyManager, // Or similar
+// storage: Box<dyn StorageBackend>,
+// time_hierarchy: TimeHierarchyManager, // Or similar
 // }
 
 // impl SyncApi {
@@ -139,16 +192,16 @@ impl Journal {
 // }
 
 // impl CivicJournalApi for SyncApi {
-    // fn append_delta(&mut self, container_id: &str, payload: &serde_json::Value) -> Result<JournalLeaf, CJError> {
-    //     // 1. Determine timestamp
-    //     // 2. Get/create appropriate Level 0 page via TimeHierarchyManager
-    //     // 3. Construct JournalLeaf (calculate PrevHash, LeafHash)
-    //     // 4. Store leaf via StorageBackend
-    //     // 5. Buffer leaf hash in page
-    //     // 6. Handle page flushing if necessary
-    //     unimplemented!()
-    // }
-    // ... other API methods
+// fn append_delta(&mut self, container_id: &str, payload: &serde_json::Value) -> Result<JournalLeaf, CJError> {
+//     // 1. Determine timestamp
+//     // 2. Get/create appropriate Level 0 page via TimeHierarchyManager
+//     // 3. Construct JournalLeaf (calculate PrevHash, LeafHash)
+//     // 4. Store leaf via StorageBackend
+//     // 5. Buffer leaf hash in page
+//     // 6. Handle page flushing if necessary
+//     unimplemented!()
+// }
+// ... other API methods
 // }
 
 #[cfg(test)]
@@ -163,7 +216,11 @@ mod tests {
         // Basic new test
         let config = get_test_config();
         let journal_result = super::Journal::new(config);
-        assert!(journal_result.is_ok(), "Failed to create sync journal: {:?}", journal_result.err());
+        assert!(
+            journal_result.is_ok(),
+            "Failed to create sync journal: {:?}",
+            journal_result.err()
+        );
     }
 
     #[test]
@@ -175,7 +232,10 @@ mod tests {
         let page_id = 99; // Assuming this page does not exist
 
         match journal.get_page(level, page_id) {
-            Err(CJError::PageNotFound { level: l, page_id: p }) => {
+            Err(CJError::PageNotFound {
+                level: l,
+                page_id: p,
+            }) => {
                 assert_eq!(l, level);
                 assert_eq!(p, page_id);
             }
@@ -184,4 +244,3 @@ mod tests {
         }
     }
 }
-
