@@ -164,7 +164,9 @@ pub async fn run() -> CJResult<()> {
         }
         Commands::Nav { container } => {
             let journal = Journal::new(config).await?;
-            nav_cmd(&journal, &container).await?;
+            let mut idx = 0usize;
+            let mut level = 0u8;
+            nav_cmd(&journal, &container, &mut idx, &mut level).await?;
         }
     }
     Ok(())
@@ -378,7 +380,7 @@ fn show_help(stdout: &mut io::Stdout) -> io::Result<()> {
     writeln!(stdout, "S : show state at timestamp")?;
     writeln!(stdout, "R : revert database")?;
     writeln!(stdout, "F : find leaf by id")?;
-    writeln!(stdout, "D : dump current item")?;
+    writeln!(stdout, "D : display database state")?;
     writeln!(stdout, "Q : quit")?;
     writeln!(stdout, "Press any key to continue...")?;
     execute!(stdout, SetForegroundColor(Color::White))?;
@@ -436,6 +438,17 @@ async fn dump_prompt(leaf: &crate::core::leaf::JournalLeaf) -> CJResult<()> {
     Ok(())
 }
 
+async fn display_db_prompt(journal: &Journal, container: &str) -> CJResult<()> {
+    terminal::disable_raw_mode()?;
+    execute!(io::stdout(), LeaveAlternateScreen)?;
+    let state = journal.reconstruct_container_state(container, Utc::now()).await?;
+    println!("{}", serde_json::to_string_pretty(&state.state_data).unwrap_or_default());
+    let _ = read_line("Press Enter to continue...");
+    execute!(io::stdout(), EnterAlternateScreen, SetBackgroundColor(Color::Blue), SetForegroundColor(Color::White), Clear(ClearType::All))?;
+    terminal::enable_raw_mode()?;
+    Ok(())
+}
+
 async fn render_nav(stdout: &mut io::Stdout, container: &str, level: u8, idx: usize, leaves: &[crate::core::leaf::JournalLeaf], journal: &Journal) -> CJResult<()> {
     execute!(stdout, cursor::MoveTo(0,0), Clear(ClearType::All), SetForegroundColor(Color::White))?;
     if level == 0 {
@@ -447,6 +460,9 @@ async fn render_nav(stdout: &mut io::Stdout, container: &str, level: u8, idx: us
         execute!(stdout, SetForegroundColor(Color::White))?;
         writeln!(stdout, "Payload: {}", serde_json::to_string(&leaf.delta_payload).unwrap_or_default())?;
         writeln!(stdout, "Hash: {}", hex::encode(leaf.leaf_hash))?;
+        execute!(stdout, SetForegroundColor(Color::Grey))?;
+        writeln!(stdout, "[D display DB] [S state] [R revert] [F find] [H help] [Q quit]")?;
+        execute!(stdout, SetForegroundColor(Color::White))?;
     } else {
         let leaf = &leaves[idx];
         if let Some(page) = find_page_for_ts(journal, level, leaf.timestamp).await? {
@@ -458,6 +474,9 @@ async fn render_nav(stdout: &mut io::Stdout, container: &str, level: u8, idx: us
             writeln!(stdout, "Start: {}", page.creation_timestamp.to_rfc3339())?;
             writeln!(stdout, "End: {}", page.end_time.to_rfc3339())?;
             writeln!(stdout, "Hash: {}", hex::encode(page.page_hash))?;
+            execute!(stdout, SetForegroundColor(Color::Grey))?;
+            writeln!(stdout, "[D display DB] [S state] [R revert] [F find] [H help] [Q quit]")?;
+            execute!(stdout, SetForegroundColor(Color::White))?;
         } else {
             writeln!(stdout, "No page at level {}", level)?;
         }
@@ -466,7 +485,7 @@ async fn render_nav(stdout: &mut io::Stdout, container: &str, level: u8, idx: us
     Ok(())
 }
 
-async fn nav_cmd(journal: &Journal, container: &str) -> CJResult<()> {
+async fn nav_cmd(journal: &Journal, container: &str, idx: &mut usize, level: &mut u8) -> CJResult<()> {
     let leaves = collect_leaves(journal, container).await?;
     if leaves.is_empty() { println!("No leaves for {}", container); return Ok(()); }
     terminal::enable_raw_mode()?;
@@ -479,34 +498,32 @@ async fn nav_cmd(journal: &Journal, container: &str) -> CJResult<()> {
     }
     execute!(io::stdout(), SetBackgroundColor(Color::Blue), SetForegroundColor(Color::White), Clear(ClearType::All))?;
     let mut stdout = io::stdout();
-    let mut idx: usize = 0;
-    let mut level: u8 = 0;
     let mut needs_render = true;
     loop {
         if needs_render {
-            render_nav(&mut stdout, container, level, idx, &leaves, journal).await?;
+            render_nav(&mut stdout, container, *level, *idx, &leaves, journal).await?;
             needs_render = false;
         }
         if event::poll(StdDuration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
-                    KeyCode::Left => if idx > 0 { idx -= 1; needs_render = true; },
-                    KeyCode::Right => if idx + 1 < leaves.len() { idx += 1; needs_render = true; },
+                    KeyCode::Left => if *idx > 0 { *idx -= 1; needs_render = true; },
+                    KeyCode::Right => if *idx + 1 < leaves.len() { *idx += 1; needs_render = true; },
                     KeyCode::Up => {
-                        if level < 5 {
-                            if find_page_for_ts(journal, level + 1, leaves[idx].timestamp).await?.is_some() {
-                                level += 1;
+                        if *level < 5 {
+                            if find_page_for_ts(journal, *level + 1, leaves[*idx].timestamp).await?.is_some() {
+                                *level += 1;
                                 needs_render = true;
                             }
                         }
                     }
-                    KeyCode::Down => if level > 0 { level -= 1; needs_render = true; },
-                    KeyCode::Char('q') | KeyCode::Char('Q') => break,
+                    KeyCode::Down => if *level > 0 { *level -= 1; needs_render = true; },
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => break,
                     KeyCode::Char('h') | KeyCode::Char('H') => { show_help(&mut stdout)?; needs_render = true; },
                     KeyCode::Char('s') | KeyCode::Char('S') => { show_state_prompt(journal, container).await?; needs_render = true; },
                     KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; needs_render = true; },
-                    KeyCode::Char('f') | KeyCode::Char('F') => { if let Some(n) = search_prompt(&leaves).await? { idx = n; needs_render = true; } },
-                    KeyCode::Char('d') | KeyCode::Char('D') => { dump_prompt(&leaves[idx]).await?; needs_render = true; },
+                    KeyCode::Char('f') | KeyCode::Char('F') => { if let Some(n) = search_prompt(&leaves).await? { *idx = n; needs_render = true; } },
+                    KeyCode::Char('d') | KeyCode::Char('D') => { display_db_prompt(journal, container).await?; needs_render = true; },
                     _ => {}
                 }
             }
@@ -518,12 +535,70 @@ async fn nav_cmd(journal: &Journal, container: &str) -> CJResult<()> {
 }
 
 async fn run_demo(config: &'static crate::Config) -> CJResult<()> {
-    if config.storage.storage_type == crate::StorageType::File {
-        let _ = std::fs::remove_dir_all(&config.storage.base_path);
-    }
+    let need_gen = match config.storage.storage_type {
+        crate::StorageType::File => !std::path::Path::new(&config.storage.base_path).exists(),
+        _ => false,
+    };
     let journal = Journal::new(config).await?;
-    generate_demo_data(&journal, "demoDB").await?;
-    nav_cmd(&journal, "demoDB").await
+    if need_gen {
+        println!("Generating demo data...");
+        generate_demo_data(&journal, "demoDB").await?;
+    }
+    demo_app(&journal, "demoDB").await
+}
+
+async fn demo_app(journal: &Journal, container: &str) -> CJResult<()> {
+    let mut idx: usize = 0;
+    let mut level: u8 = 0;
+    terminal::enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen, SetBackgroundColor(Color::Blue), SetForegroundColor(Color::White), Clear(ClearType::All))?;
+    let mut stdout = io::stdout();
+    let mut needs_render = true;
+    loop {
+        if needs_render {
+            render_menu(&mut stdout)?;
+            needs_render = false;
+        }
+        if event::poll(StdDuration::from_millis(200))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char('o') | KeyCode::Char('O') => {
+                        execute!(io::stdout(), LeaveAlternateScreen)?;
+                        terminal::disable_raw_mode()?;
+                        nav_cmd(journal, container, &mut idx, &mut level).await?;
+                        terminal::enable_raw_mode()?;
+                        execute!(io::stdout(), EnterAlternateScreen, SetBackgroundColor(Color::Blue), SetForegroundColor(Color::White), Clear(ClearType::All))?;
+                        needs_render = true;
+                    }
+                    KeyCode::Char('d') | KeyCode::Char('D') => { display_db_prompt(journal, container).await?; needs_render = true; }
+                    KeyCode::Char('s') | KeyCode::Char('S') => { show_state_prompt(journal, container).await?; needs_render = true; }
+                    KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; needs_render = true; }
+                    KeyCode::Char('h') | KeyCode::Char('H') => { show_help(&mut stdout)?; needs_render = true; }
+                    KeyCode::Char('q') | KeyCode::Char('Q') => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+    execute!(io::stdout(), ResetColor, LeaveAlternateScreen)?;
+    terminal::disable_raw_mode()?;
+    Ok(())
+}
+
+fn render_menu(stdout: &mut io::Stdout) -> io::Result<()> {
+    execute!(stdout, cursor::MoveTo(0,0), Clear(ClearType::All), SetForegroundColor(Color::White))?;
+    writeln!(stdout, "CJ Demo Main Menu")?;
+    execute!(stdout, SetForegroundColor(Color::Grey))?;
+    writeln!(stdout, "O : open navigator")?;
+    writeln!(stdout, "D : display database state")?;
+    writeln!(stdout, "S : show state at timestamp")?;
+    writeln!(stdout, "R : revert database")?;
+    writeln!(stdout, "H : help")?;
+    writeln!(stdout, "Q : quit")?;
+    execute!(stdout, SetForegroundColor(Color::White))?;
+    stdout.flush()?;
+    Ok(())
+
 }
 
 fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
@@ -539,22 +614,31 @@ fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
 async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> {
     use crate::turnstile::Turnstile;
     let mut ts = Turnstile::new("00".repeat(32), 1);
-    let base = Utc::now();
+    let mut ts_time = Utc::now() - Duration::days(365 * 20);
 
-    let p1 = json!({"field1":"alpha"});
-    let t1 = ts.append(&p1.to_string(), base.timestamp() as u64)?;
-    journal.append_leaf(base, None, container.to_string(), p1).await?;
-    ts.confirm_ticket(&t1, true, None)?;
+    for year in 0..20 {
+        for field in 1..=50 {
+            let name = format!("field{}", field);
+            let val = format!("{}_y{}", name, year);
+            let payload = json!({ name.clone(): val });
+            let ticket = ts.append(&payload.to_string(), ts_time.timestamp() as u64)?;
+            if year == 0 && field == 1 {
+                ts.confirm_ticket(&ticket, false, Some("db error"))?;
+                journal.append_leaf(ts_time, None, container.to_string(), json!({"log":"db error"})).await?;
+                journal.append_leaf(ts_time + Duration::seconds(1), None, container.to_string(), payload.clone()).await?;
+                ts.confirm_ticket(&ticket, true, None)?;
+            } else {
+                ts.confirm_ticket(&ticket, true, None)?;
+                journal.append_leaf(ts_time, None, container.to_string(), payload).await?;
+            }
+            ts_time += Duration::days(1);
+        }
+        ts_time += Duration::days(365 - 50); // move roughly one year ahead
+    }
 
-    let p2 = json!({"field2":"beta"});
-    let t2 = ts.append(&p2.to_string(), (base + Duration::seconds(1)).timestamp() as u64)?;
-    ts.confirm_ticket(&t2, false, Some("db error"))?;
-    journal.append_leaf(base + Duration::seconds(1), None, container.to_string(), json!({"log":"db error"})).await?;
-    journal.append_leaf(base + Duration::seconds(2), None, container.to_string(), p2.clone()).await?;
-    ts.confirm_ticket(&t2, true, None)?;
+    if ts.append("{", ts_time.timestamp() as u64).is_err() {
+        journal.append_leaf(ts_time + Duration::seconds(1), None, container.to_string(), json!({"log":"malformed packet"})).await?;
 
-    if ts.append("{", (base + Duration::seconds(3)).timestamp() as u64).is_err() {
-        journal.append_leaf(base + Duration::seconds(3), None, container.to_string(), json!({"log":"malformed packet"})).await?;
     }
 
     Ok(())
