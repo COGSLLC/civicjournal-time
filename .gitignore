@@ -14,7 +14,7 @@ Cargo.lock
 .windsurf/
 
 # Data directory (contains demo data)
-.data/
+data/
 
 # OS-specific files
 .DS_Store
