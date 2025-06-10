@@ -661,16 +661,42 @@ Ok(original_page_id)
         let mut active_pages_guard = self.active_pages.lock().await;
         if let Some(existing_parent) = active_pages_guard.get(&parent_level_idx).cloned() {
             if original_trigger_timestamp >= existing_parent.end_time {
-                log::debug!("[ROLLUP] Finalizing stale parent page L{}P{} before creating new one", existing_parent.level, existing_parent.page_id);
+                log::debug!(
+                    "[ROLLUP] Finalizing stale parent page L{}P{} before creating new one",
+                    existing_parent.level,
+                    existing_parent.page_id
+                );
                 active_pages_guard.remove(&parent_level_idx);
                 drop(active_pages_guard);
-                let mut page_to_store = existing_parent.clone();
-                page_to_store.recalculate_merkle_root_and_page_hash();
-                self.storage.store_page(&page_to_store).await?;
-                self.last_finalized_page_ids.lock().await.insert(parent_level_idx, page_to_store.page_id);
-                self.last_finalized_page_hashes.lock().await.insert(parent_level_idx, page_to_store.page_hash);
-                // Cascade further up
-                Box::pin(self.perform_rollup(parent_level_idx, page_to_store.page_hash, original_trigger_timestamp)).await?;
+                if existing_parent.is_content_empty() {
+                    log::debug!(
+                        "[Rollup] Discarding stale empty parent page L{}/{}",
+                        existing_parent.level,
+                        existing_parent.page_id
+                    );
+                } else {
+                    let mut page_to_store = existing_parent.clone();
+                    page_to_store.recalculate_merkle_root_and_page_hash();
+                    self.storage.store_page(&page_to_store).await?;
+                    self
+                        .last_finalized_page_ids
+                        .lock()
+                        .await
+                        .insert(parent_level_idx, page_to_store.page_id);
+                    self
+                        .last_finalized_page_hashes
+                        .lock()
+                        .await
+                        .insert(parent_level_idx, page_to_store.page_hash);
+                    Box::pin(
+                        self.perform_rollup(
+                            parent_level_idx,
+                            page_to_store.page_hash,
+                            original_trigger_timestamp,
+                        ),
+                    )
+                    .await?;
+                }
             } else {
                 drop(active_pages_guard);
             }

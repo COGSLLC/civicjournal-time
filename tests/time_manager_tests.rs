@@ -941,3 +941,52 @@ async fn test_age_based_rollup_finalizes_parent_page() {
         panic!("expected thrall hashes");
     }
 }
+
+#[tokio::test]
+async fn test_discard_stale_empty_parent_page() {
+    let _guard = SHARED_TEST_ID_MUTEX.lock().await;
+    reset_global_ids();
+
+    let config = Arc::new(Config {
+        time_hierarchy: TimeHierarchyConfig {
+            levels: vec![
+                TimeLevel {
+                    name: "L0".to_string(),
+                    duration_seconds: 60,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 1,
+                        max_page_age_seconds: 0,
+                        content_type: RollupContentType::ChildHashes,
+                    },
+                    retention_policy: None,
+                },
+                TimeLevel {
+                    name: "L1".to_string(),
+                    duration_seconds: 60,
+                    rollup_config: LevelRollupConfig {
+                        max_items_per_page: 10,
+                        max_page_age_seconds: 0,
+                        content_type: RollupContentType::NetPatches,
+                    },
+                    retention_policy: None,
+                },
+            ],
+        },
+        force_rollup_on_shutdown: false,
+        ..Default::default()
+    });
+
+    let storage = Arc::new(MemoryStorage::new());
+    let manager = TimeHierarchyManager::new(config, storage.clone());
+
+    let base = Utc::now();
+
+    let leaf1 = JournalLeaf::new(base, None, "c".into(), json!(1)).unwrap();
+    manager.add_leaf(&leaf1, leaf1.timestamp).await.unwrap();
+
+    let leaf2 =
+        JournalLeaf::new(base + Duration::seconds(70), None, "c".into(), json!(2)).unwrap();
+    manager.add_leaf(&leaf2, leaf2.timestamp).await.unwrap();
+
+    assert!(storage.load_page(1, 1).await.unwrap().is_none());
+}

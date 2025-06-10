@@ -19,7 +19,7 @@ max_leaves_per_page = 1000
 
 # Maximum age of a page before forcing rollup (in seconds)
 # Older pages will be rolled up to higher time levels
-max_page_age_seconds = 3600  # 1 hour
+max_page_age_seconds = 0     # age-based rollup disabled
 
 # Whether to force rollup on graceful shutdown
 # This ensures data consistency but may increase shutdown time

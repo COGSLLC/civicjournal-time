@@ -84,7 +84,7 @@ levels = [
 # Configuration for each level (index corresponds to time_hierarchy.levels - 1)
 [[rollup.levels]]
 max_items_per_page = 1000
-max_page_age_seconds = 3600  # 1 hour
+max_page_age_seconds = 0     # age-based rollup disabled
 content_type = "ChildHashes"  # or "NetPatches"
 
 [[rollup.levels]]
@@ -257,7 +257,7 @@ config: |
   [rollup]
   [[rollup.levels]]
   max_items_per_page = 1000
-  max_page_age_seconds = 3600
+  max_page_age_seconds = 0
   content_type = "ChildHashes"
   
   # Additional configuration...

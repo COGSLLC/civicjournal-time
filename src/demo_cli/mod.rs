@@ -230,12 +230,18 @@ async fn simulate(
     let dur = parse_duration_spec(duration)?;
     let mut rng = StdRng::seed_from_u64(seed);
     let range_secs = dur.num_seconds();
+
+    use crate::turnstile::Turnstile;
+    let mut ts_queue = Turnstile::new("00".repeat(32), 1);
+
     for i in 0..fields {
         let field_name = format!("field{}", i + 1);
         let offset = rng.gen_range(0..range_secs);
         let ts = start_ts + Duration::seconds(offset);
         let val: String = Sentence(1..2).fake();
         let payload = json!({ field_name: val });
+        let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64)?;
+        ts_queue.confirm_ticket(&ticket, true, None)?;
         journal
             .append_leaf(ts, None, container.to_string(), payload)
             .await?;

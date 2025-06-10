@@ -7,13 +7,10 @@ use std::path::Path;
 
 use std::collections::HashSet;
 
-use super::{
-    Config,
-    TimeHierarchyConfig,
-};
 use super::error::ConfigError; // For return types in validation functions
-use crate::StorageType;      // For StorageType enum used in tests
-use crate::CJError;          // For error types
+use super::{Config, TimeHierarchyConfig};
+use crate::CJError;
+use crate::StorageType; // For StorageType enum used in tests // For error types
 
 /// Validates the application configuration.
 ///
@@ -25,28 +22,28 @@ use crate::CJError;          // For error types
 ///
 /// Returns a `ConfigError` if any validation check fails.
 pub fn validate_config(config: &Config) -> Result<(), CJError> {
-    // Validate time hierarchy first as other validations depend on it. 
+    // Validate time hierarchy first as other validations depend on it.
     // This now includes per-level rollup validation.
     validate_time_hierarchy(&config.time_hierarchy)?;
-    
+
     // Validate storage configuration
     validate_storage_config(&config.storage)?;
-    
+
     // Validate compression configuration
     validate_compression_config(&config.compression)?;
-    
+
     // Validate logging configuration
     validate_logging_config(&config.logging)?;
-    
+
     // Validate metrics configuration
     validate_metrics_config(&config.metrics)?;
-    
+
     // Validate retention configuration against time hierarchy
     validate_retention_config(&config.retention, &config.time_hierarchy)?;
-    
+
     // Cross-section validations
     validate_cross_section(config)?;
-    
+
     Ok(())
 }
 
@@ -62,12 +59,13 @@ fn validate_storage_config(config: &super::StorageConfig) -> Result<(), CJError>
             return Err(ConfigError::invalid_value(
                 "storage.base_path",
                 "",
-                "Base path cannot be empty for file storage"
-            ).into());
+                "Base path cannot be empty for file storage",
+            )
+            .into());
         }
-        
+
         let base_path = Path::new(&config.base_path);
-        
+
         // Check if base path exists and is a directory
         match std::fs::metadata(base_path) {
             Ok(metadata) => {
@@ -75,10 +73,11 @@ fn validate_storage_config(config: &super::StorageConfig) -> Result<(), CJError>
                     return Err(ConfigError::invalid_value(
                         "storage.base_path",
                         base_path.display().to_string(),
-                        "Base path must be a directory"
-                    ).into());
+                        "Base path must be a directory",
+                    )
+                    .into());
                 }
-                
+
                 // Check write permissions
                 let test_file = base_path.join(".civicjournal_test");
                 match std::fs::File::create(&test_file) {
@@ -90,8 +89,9 @@ fn validate_storage_config(config: &super::StorageConfig) -> Result<(), CJError>
                         return Err(ConfigError::invalid_value(
                             "storage.base_path",
                             base_path.display().to_string(),
-                            format!("Cannot write to directory: {}", e)
-                        ).into());
+                            format!("Cannot write to directory: {}", e),
+                        )
+                        .into());
                     }
                 }
             }
@@ -102,19 +102,21 @@ fn validate_storage_config(config: &super::StorageConfig) -> Result<(), CJError>
                         return Err(ConfigError::invalid_value(
                             "storage.base_path",
                             base_path.display().to_string(),
-                            "Parent directory does not exist"
-                        ).into());
+                            "Parent directory does not exist",
+                        )
+                        .into());
                     }
-                    
+
                     // Check if we can create the directory
                     if let Err(e) = std::fs::create_dir_all(base_path) {
                         return Err(ConfigError::invalid_value(
                             "storage.base_path",
                             base_path.display().to_string(),
-                            format!("Cannot create directory: {}", e)
-                        ).into());
+                            format!("Cannot create directory: {}", e),
+                        )
+                        .into());
                     }
-                    
+
                     // Clean up the test directory
                     let _ = std::fs::remove_dir(base_path);
                 }
@@ -123,31 +125,36 @@ fn validate_storage_config(config: &super::StorageConfig) -> Result<(), CJError>
                 return Err(ConfigError::invalid_value(
                     "storage.base_path",
                     base_path.display().to_string(),
-                    format!("Error accessing path: {}", e)
-                ).into());
+                    format!("Error accessing path: {}", e),
+                )
+                .into());
             }
         }
     }
-    
+
     // Validate max_open_files
-    const MIN_OPEN_FILES: u32 = 10;  // Reasonable minimum for most systems
-    const MAX_OPEN_FILES: u32 = 1024 * 1024;  // Reasonable maximum to prevent resource exhaustion
-    
+    const MIN_OPEN_FILES: u32 = 10; // Reasonable minimum for most systems
+    const MAX_OPEN_FILES: u32 = 1024 * 1024; // Reasonable maximum to prevent resource exhaustion
+
     if config.max_open_files < MIN_OPEN_FILES {
         return Err(ConfigError::invalid_value(
             "storage.max_open_files",
             config.max_open_files,
-            format!("Maximum number of open files must be at least {}", MIN_OPEN_FILES)
-        ).into());
+            format!(
+                "Maximum number of open files must be at least {}",
+                MIN_OPEN_FILES
+            ),
+        )
+        .into());
     }
-    
+
     if config.max_open_files > MAX_OPEN_FILES {
         log::warn!(
             "High value for max_open_files ({}). This may consume significant system resources.",
             config.max_open_files
         );
     }
-    
+
     Ok(())
 }
 
@@ -157,22 +164,25 @@ fn validate_compression_config(config: &super::CompressionConfig) -> Result<(), 
     if !config.enabled {
         return Ok(());
     }
-    
+
     // Check compression level is within valid range for the selected algorithm
     match config.algorithm {
         super::CompressionAlgorithm::Zstd => {
             const ZSTD_MIN_LEVEL: u8 = 1;
             const ZSTD_MAX_LEVEL: u8 = 22;
-            
+
             if config.level < ZSTD_MIN_LEVEL || config.level > ZSTD_MAX_LEVEL {
                 return Err(ConfigError::invalid_value(
                     "compression.level",
                     config.level,
-                    format!("Zstd compression level must be between {} and {}", 
-                           ZSTD_MIN_LEVEL, ZSTD_MAX_LEVEL)
-                ).into());
+                    format!(
+                        "Zstd compression level must be between {} and {}",
+                        ZSTD_MIN_LEVEL, ZSTD_MAX_LEVEL
+                    ),
+                )
+                .into());
             }
-            
+
             // Recommend levels 1-4 for fast compression, 5-12 for balanced, 13-22 for high compression
             if config.level >= 15 {
                 log::warn!(
@@ -184,16 +194,19 @@ fn validate_compression_config(config: &super::CompressionConfig) -> Result<(), 
         super::CompressionAlgorithm::Lz4 => {
             const LZ4_MIN_LEVEL: u8 = 1;
             const LZ4_MAX_LEVEL: u8 = 12;
-            
+
             if config.level < LZ4_MIN_LEVEL || config.level > LZ4_MAX_LEVEL {
                 return Err(ConfigError::invalid_value(
                     "compression.level",
                     config.level,
-                    format!("LZ4 compression level must be between {} and {}", 
-                           LZ4_MIN_LEVEL, LZ4_MAX_LEVEL)
-                ).into());
+                    format!(
+                        "LZ4 compression level must be between {} and {}",
+                        LZ4_MIN_LEVEL, LZ4_MAX_LEVEL
+                    ),
+                )
+                .into());
             }
-            
+
             // LZ4 levels above 9 use a different algorithm that's much slower
             if config.level >= 10 {
                 log::info!(
@@ -221,7 +234,7 @@ fn validate_compression_config(config: &super::CompressionConfig) -> Result<(), 
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -232,48 +245,49 @@ fn validate_logging_config(config: &super::LoggingConfig) -> Result<(), CJError>
         log::warn!("Both console and file logging are disabled. No logs will be captured.");
         return Ok(());
     }
-    
+
     // If file logging is enabled, validate the log file path
     if config.file {
         if config.file_path.is_empty() {
             return Err(ConfigError::missing_value("logging.file_path").into());
         }
-        
+
         // Check if the log file path is absolute
         let log_path = Path::new(&config.file_path);
         let abs_log_path = if log_path.is_absolute() {
             log_path.to_path_buf()
         } else {
             // If relative, make it absolute relative to the current directory
-            let current_dir = std::env::current_dir()
-                .map_err(ConfigError::Io)?;
+            let current_dir = std::env::current_dir().map_err(ConfigError::Io)?;
             current_dir.join(log_path)
         };
-        
+
         // Check if the parent directory exists and is writable
         if let Some(parent) = abs_log_path.parent() {
             if !parent.exists() {
                 return Err(ConfigError::invalid_value(
                     "logging.file_path",
                     &config.file_path,
-                    "Parent directory does not exist"
-                ).into());
+                    "Parent directory does not exist",
+                )
+                .into());
             }
-            
+
             // Check if the parent directory is writable
             let test_file = parent.join(".civicjournal_test_write");
             if let Err(e) = std::fs::File::create(&test_file) {
                 return Err(ConfigError::invalid_value(
                     "logging.file_path",
                     &config.file_path,
-                    format!("Cannot write to log directory: {}", e)
-                ).into());
+                    format!("Cannot write to log directory: {}", e),
+                )
+                .into());
             }
-            
+
             // Clean up test file
             let _ = std::fs::remove_file(test_file);
         }
-        
+
         // Check if we can open the file for appending
         if let Err(e) = std::fs::OpenOptions::new()
             .create(true)
@@ -283,17 +297,18 @@ fn validate_logging_config(config: &super::LoggingConfig) -> Result<(), CJError>
             return Err(ConfigError::invalid_value(
                 "logging.file_path",
                 &config.file_path,
-                format!("Cannot open log file for writing: {}", e)
-            ).into());
+                format!("Cannot open log file for writing: {}", e),
+            )
+            .into());
         }
-        
+
         // Warn about potential disk usage since we don't have built-in rotation
         log::warn!(
             "File logging is enabled at '{}' but log rotation is not built-in. Consider using an external log rotation solution to prevent excessive disk usage.",
             abs_log_path.display()
         );
     }
-    
+
     Ok(())
 }
 
@@ -303,25 +318,26 @@ fn validate_metrics_config(config: &super::MetricsConfig) -> Result<(), CJError>
     if !config.enabled {
         return Ok(());
     }
-    
+
     // Validate push interval
     if config.push_interval_seconds == 0 {
-        return Err(ConfigError::validation_error(
-            "Metrics push interval must be greater than 0"
-        ).into());
+        return Err(
+            ConfigError::validation_error("Metrics push interval must be greater than 0").into(),
+        );
     }
-    
+
     // If an endpoint is provided, it should be a valid URL
     if !config.endpoint.is_empty() {
         if let Err(e) = url::Url::parse(&config.endpoint) {
             return Err(ConfigError::invalid_value(
                 "metrics.endpoint",
                 &config.endpoint,
-                format!("Invalid URL format: {}", e)
-            ).into());
+                format!("Invalid URL format: {}", e),
+            )
+            .into());
         }
     }
-    
+
     Ok(())
 }
 
@@ -334,24 +350,25 @@ fn validate_retention_config(
     if !config.enabled {
         return Ok(());
     }
-    
+
     // Check cleanup interval
     if config.cleanup_interval_seconds == 0 {
-        return Err(ConfigError::validation_error(
-            "Cleanup interval must be greater than 0"
-        ).into());
+        return Err(
+            ConfigError::validation_error("Cleanup interval must be greater than 0").into(),
+        );
     }
-    
+
     // If period_seconds is 0, it means retain forever, which is valid
     if config.period_seconds > 0 {
         // If a retention period is set, ensure it's at least as long as the cleanup interval
         if config.period_seconds < config.cleanup_interval_seconds {
             return Err(ConfigError::validation_error(
-                "Retention period must be greater than or equal to cleanup interval"
-            ).into());
+                "Retention period must be greater than or equal to cleanup interval",
+            )
+            .into());
         }
     }
-    
+
     Ok(())
 }
 
@@ -363,34 +380,39 @@ fn validate_cross_section(config: &Config) -> Result<(), CJError> {
             super::CompressionAlgorithm::Zstd => {
                 #[cfg(not(feature = "zstd-compression"))]
                 return Err(ConfigError::validation_error(
-                    "Zstd compression requires the 'zstd' feature to be enabled"
-                ).into());
+                    "Zstd compression requires the 'zstd' feature to be enabled",
+                )
+                .into());
             }
             super::CompressionAlgorithm::Lz4 => {
                 #[cfg(not(feature = "lz4-compression"))]
                 return Err(ConfigError::validation_error(
-                    "LZ4 compression requires the 'lz4' feature to be enabled"
-                ).into());
+                    "LZ4 compression requires the 'lz4' feature to be enabled",
+                )
+                .into());
             }
             super::CompressionAlgorithm::Snappy => {
                 #[cfg(not(feature = "snappy-compression"))]
                 return Err(ConfigError::validation_error(
-                    "Snappy compression requires the 'snappy' feature to be enabled"
-                ).into());
+                    "Snappy compression requires the 'snappy' feature to be enabled",
+                )
+                .into());
             }
             super::CompressionAlgorithm::None => {}
         }
     }
-    
+
     // Add more cross-section validations as needed
-    
+
     Ok(())
 }
 
 /// Validate time hierarchy configuration, including per-level rollup configurations.
 fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> {
     if config.levels.is_empty() {
-        return Err(ConfigError::validation_error("Time hierarchy must have at least one level").into());
+        return Err(
+            ConfigError::validation_error("Time hierarchy must have at least one level").into(),
+        );
     }
 
     // Check for duplicate level names
@@ -398,7 +420,11 @@ fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> 
     for (i, level) in config.levels.iter().enumerate() {
         // Check for duplicate level names
         if !names.insert(&level.name) {
-            return Err(ConfigError::validation_error(format!("Duplicate time level name: {}", level.name)).into());
+            return Err(ConfigError::validation_error(format!(
+                "Duplicate time level name: {}",
+                level.name
+            ))
+            .into());
         }
 
         // Ensure duration is greater than 0
@@ -406,8 +432,9 @@ fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> 
             return Err(ConfigError::invalid_value(
                 &format!("time_hierarchy.levels[{}].duration_seconds", i),
                 level.duration_seconds,
-                "Duration must be greater than 0"
-            ).into());
+                "Duration must be greater than 0",
+            )
+            .into());
         }
 
         // Ensure durations are strictly ascending (for levels after the first)
@@ -418,26 +445,36 @@ fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> 
                 return Err(ConfigError::invalid_value(
                     &format!("time_hierarchy.levels[{}].duration_seconds", i),
                     level.duration_seconds,
-                    "Duration must be greater than the previous level's duration"
-                ).into());
+                    "Duration must be greater than the previous level's duration",
+                )
+                .into());
             }
         }
 
         // Validate per-level rollup config
         if level.rollup_config.max_items_per_page == 0 {
             return Err(ConfigError::invalid_value(
-                &format!("time_hierarchy.levels[{}].rollup_config.max_items_per_page", i),
+                &format!(
+                    "time_hierarchy.levels[{}].rollup_config.max_items_per_page",
+                    i
+                ),
                 level.rollup_config.max_items_per_page,
-                "max_items_per_page must be greater than 0"
-            ).into());
+                "max_items_per_page must be greater than 0",
+            )
+            .into());
         }
 
-        if level.rollup_config.max_page_age_seconds == 0 {
+        // Allow zero to disable age-based rollups. Negative values are invalid.
+        if (level.rollup_config.max_page_age_seconds as i64) < 0 {
             return Err(ConfigError::invalid_value(
-                &format!("time_hierarchy.levels[{}].rollup_config.max_page_age_seconds", i),
+                &format!(
+                    "time_hierarchy.levels[{}].rollup_config.max_page_age_seconds",
+                    i
+                ),
                 level.rollup_config.max_page_age_seconds,
-                "max_page_age_seconds must be greater than 0"
-            ).into());
+                "max_page_age_seconds cannot be negative",
+            )
+            .into());
         }
         // TODO: Add validation for content_type consistency if needed, e.g., L0 usually ChildHashes or NetPatches, higher levels usually ChildHashes.
     }
@@ -447,19 +484,17 @@ fn validate_time_hierarchy(config: &TimeHierarchyConfig) -> Result<(), CJError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{CompressionConfig, RetentionConfig, StorageConfig};
+    use crate::types::time::{LevelRollupConfig, TimeHierarchyConfig, TimeLevel};
     use crate::CompressionAlgorithm;
-    use crate::config::{
-        CompressionConfig, RetentionConfig, StorageConfig,
-    };
-    use crate::types::time::{TimeHierarchyConfig, TimeLevel, LevelRollupConfig}; 
 
     #[test]
     fn test_validate_time_hierarchy() {
         // Valid hierarchy
         let valid = TimeHierarchyConfig {
             levels: vec![TimeLevel {
-                    rollup_config: LevelRollupConfig::default(),
-                    retention_policy: None,
+                rollup_config: LevelRollupConfig::default(),
+                retention_policy: None,
                 name: "test".to_string(),
                 duration_seconds: 60,
             }],
@@ -510,9 +545,11 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_storage_config() { // Renamed test function for clarity
+    fn test_validate_storage_config() {
+        // Renamed test function for clarity
         // Valid storage
-        let valid = StorageConfig { // Assuming StorageConfig is in parent module
+        let valid = StorageConfig {
+            // Assuming StorageConfig is in parent module
             storage_type: StorageType::File, // Corrected field name and type
             base_path: "./test_data_validation".to_string(), // Use a test-specific path
             max_open_files: 100,
@@ -583,7 +620,10 @@ mod tests {
             period_seconds: 0,
             cleanup_interval_seconds: 300,
         };
-        assert!(validate_retention_config(&zero_period, &TimeHierarchyConfig::default()).is_ok(), "Retention with period_seconds = 0 (retain forever) should be valid");
+        assert!(
+            validate_retention_config(&zero_period, &TimeHierarchyConfig::default()).is_ok(),
+            "Retention with period_seconds = 0 (retain forever) should be valid"
+        );
 
         // Zero cleanup interval
         let zero_interval = RetentionConfig {
@@ -591,6 +631,8 @@ mod tests {
             period_seconds: 3600,
             cleanup_interval_seconds: 0,
         };
-        assert!(validate_retention_config(&zero_interval, &TimeHierarchyConfig::default()).is_err());
+        assert!(
+            validate_retention_config(&zero_interval, &TimeHierarchyConfig::default()).is_err()
+        );
     }
 }
