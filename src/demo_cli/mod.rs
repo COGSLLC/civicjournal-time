@@ -5,7 +5,7 @@
 //! Each subcommand is currently a stub. Implementation will follow
 //! the specification in `DEMOMODE.md`.
 
-use crate::api::async_api::Journal;
+use crate::api::async_api::{Journal, PageContentHash};
 use crate::{init, CJResult};
 use clap::{Parser, Subcommand};
 #[cfg(feature = "demo")]
@@ -27,8 +27,15 @@ use serde_json::json;
 use std::io::{self, Write};
 use std::time::Duration as StdDuration;
 use tokio_postgres::NoTls;
+use std::collections::HashMap;
+use tokio::sync::Mutex;
+use lazy_static::lazy_static;
 
 const DEMO_VERSION: &str = "1";
+
+lazy_static! {
+    static ref LAST_HASHES: Mutex<HashMap<String, [u8; 32]>> = Mutex::new(HashMap::new());
+}
 
 #[derive(Parser)]
 #[command(author, version, about="CivicJournal Demo CLI", long_about=None)]
@@ -233,6 +240,7 @@ async fn simulate(
 
     use crate::turnstile::Turnstile;
     let mut ts_queue = Turnstile::new("00".repeat(32), 1);
+    let mut last_hash = get_last_leaf_hash(journal, container).await?;
 
     for i in 0..fields {
         let field_name = format!("field{}", i + 1);
@@ -242,9 +250,7 @@ async fn simulate(
         let payload = json!({ field_name: val });
         let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64)?;
         ts_queue.confirm_ticket(&ticket, true, None)?;
-        journal
-            .append_leaf(ts, None, container.to_string(), payload)
-            .await?;
+        append_chained_leaf(journal, container, ts, payload, &mut last_hash).await?;
     }
     println!("Simulated {} fields over {}", fields, duration);
     Ok(())
@@ -306,14 +312,15 @@ async fn revert_cmd(journal: &Journal, container: &str, as_of: &str, db_url: &st
     tx.commit()
         .await
         .map_err(|e| crate::CJError::new(e.to_string()))?;
-    journal
-        .append_leaf(
-            Utc::now(),
-            None,
-            container.to_string(),
-            json!({"revert_to": as_of}),
-        )
-        .await?;
+    let mut last_hash = get_last_leaf_hash(journal, container).await?;
+    append_chained_leaf(
+        journal,
+        container,
+        Utc::now(),
+        json!({"revert_to": as_of}),
+        &mut last_hash,
+    )
+    .await?;
     println!("Reverted {} to {}", container, as_of);
     Ok(())
 }
@@ -358,7 +365,12 @@ async fn list_leaves(journal: &Journal, container: &str) -> CJResult<()> {
     Ok(())
 }
 
-async fn show_leaf(journal: &Journal, container: &str, leaf_id: u64, pretty: bool) -> CJResult<()> {
+async fn show_leaf(
+    journal: &Journal,
+    container: &str,
+    leaf_id: u64,
+    pretty: bool,
+) -> CJResult<()> {
     let mut pages = journal
         .query
         .storage()
@@ -389,12 +401,18 @@ async fn show_leaf(journal: &Journal, container: &str, leaf_id: u64, pretty: boo
                         } else {
                             serde_json::to_string(&leaf.delta_payload).unwrap_or_default()
                         };
+                        let prev = leaf
+                            .prev_hash
+                            .map(|h| hex::encode(h))
+                            .unwrap_or_else(|| "None".to_string());
                         println!(
-                            "Leaf {} @ {}\n{}",
+                            "Leaf {} @ {}",
                             leaf_id,
                             leaf.timestamp.to_rfc3339(),
-                            output
                         );
+                        println!("Prev: {}", prev);
+                        println!("Payload: {}", output);
+                        println!("Hash: {}", hex::encode(leaf.leaf_hash));
                         return Ok(());
                     }
                 }
@@ -424,18 +442,29 @@ async fn list_pages(journal: &Journal, level: u32) -> CJResult<()> {
 }
 
 async fn show_page(journal: &Journal, page_id: u64, raw: bool) -> CJResult<()> {
-    if let Some(page) = journal.query.storage().load_page(0, page_id).await? {
-        if raw {
-            println!("page_hash {}", hex::encode(page.page_hash));
-        } else {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&page).unwrap_or_default()
-            );
+    for level in 0u8..=6u8 {
+        if let Some(page) = journal.query.storage().load_page(level, page_id).await? {
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&page).unwrap_or_default());
+            } else {
+                println!("Page L{}P{}", page.level, page.page_id);
+                println!("Start: {}", page.creation_timestamp.to_rfc3339());
+                println!("End: {}", page.end_time.to_rfc3339());
+                let prev = page
+                    .prev_page_hash
+                    .map(|h| hex::encode(h))
+                    .unwrap_or_else(|| "None".to_string());
+                println!("Prev: {}", prev);
+                println!("Merkle: {}", hex::encode(page.merkle_root));
+                println!("Hash: {}", hex::encode(page.page_hash));
+                if let crate::core::page::PageContent::NetPatches(ref p) = page.content {
+                    println!("NetPatch: {}", serde_json::to_string_pretty(p).unwrap_or_default());
+                }
+            }
+            return Ok(());
         }
-    } else {
-        println!("Page {} not found", page_id);
     }
+    println!("Page {} not found", page_id);
     Ok(())
 }
 
@@ -660,10 +689,51 @@ async fn display_db_prompt(journal: &Journal, container: &str) -> CJResult<()> {
     let state = journal
         .reconstruct_container_state(container, Utc::now())
         .await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&state.state_data).unwrap_or_default()
-    );
+    use serde_json::Value;
+    use std::cmp::max;
+    use std::collections::BTreeMap;
+    let mut fields: Vec<(usize, String)> = Vec::new();
+    let mut other: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(map) = state.state_data.as_object() {
+        for (k, v) in map {
+            if k.starts_with("field") {
+                if let Ok(n) = k.trim_start_matches("field").parse::<usize>() {
+                    let val = match v {
+                        Value::String(s) => s.clone(),
+                        _ => v.to_string(),
+                    };
+                    fields.push((n, val));
+                } else {
+                    other.insert(k.clone(), v.to_string());
+                }
+            } else {
+                other.insert(k.clone(), v.to_string());
+            }
+        }
+    }
+    fields.sort_by_key(|(n, _)| *n);
+    let formatted: Vec<String> = fields
+        .iter()
+        .map(|(n, v)| format!("field{}: {}", n, v))
+        .collect();
+    let (term_w, _) = terminal::size().unwrap_or((80, 20));
+    let max_len: u16 = formatted.iter().map(|s| s.len() as u16).max().unwrap_or(0);
+    let col_width = max(max_len + 2, 20);
+    let cols = max(1, term_w / col_width);
+    let rows = (formatted.len() as u16 + cols - 1) / cols;
+    for r in 0..rows {
+        let mut line = String::new();
+        for c in 0..cols {
+            let idx = (c * rows + r) as usize;
+            if idx < formatted.len() {
+                line.push_str(&format!("{:<width$}", formatted[idx], width = col_width as usize));
+            }
+        }
+        println!("{}", line.trim_end());
+    }
+    for (k, v) in other {
+        println!("{}: {}", k, v);
+    }
     let _ = read_line("Press Enter to continue...");
     execute!(io::stdout(), Clear(ClearType::All))?;
     terminal::enable_raw_mode()?;
@@ -764,6 +834,11 @@ async fn render_nav(
             "Payload: {}",
             serde_json::to_string(&leaf.delta_payload).unwrap_or_default()
         )?;
+        let prev = leaf
+            .prev_hash
+            .map(|h| hex::encode(h))
+            .unwrap_or_else(|| "None".to_string());
+        writeln!(stdout, "Prev: {}", prev)?;
         writeln!(stdout, "Hash: {}", hex::encode(leaf.leaf_hash))?;
         execute!(stdout, SetForegroundColor(Color::Grey))?;
         writeln!(
@@ -781,7 +856,19 @@ async fn render_nav(
             execute!(stdout, SetForegroundColor(Color::White))?;
             writeln!(stdout, "Start: {}", page.creation_timestamp.to_rfc3339())?;
             writeln!(stdout, "End: {}", page.end_time.to_rfc3339())?;
+            let prev = page
+                .prev_page_hash
+                .map(|h| hex::encode(h))
+                .unwrap_or_else(|| "None".to_string());
+            writeln!(stdout, "Prev: {}", prev)?;
             writeln!(stdout, "Hash: {}", hex::encode(page.page_hash))?;
+            if let crate::core::page::PageContent::NetPatches(ref p) = page.content {
+                writeln!(
+                    stdout,
+                    "NetPatch: {}",
+                    serde_json::to_string_pretty(p).unwrap_or_default()
+                )?;
+            }
             execute!(stdout, SetForegroundColor(Color::Grey))?;
             writeln!(
                 stdout,
@@ -1032,10 +1119,68 @@ fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
     Ok(())
 }
 
+async fn get_last_leaf_hash(journal: &Journal, container: &str) -> CJResult<Option<[u8; 32]>> {
+    use crate::core::page::JournalPageSummary;
+    let mut pages = journal
+        .query
+        .storage()
+        .list_finalized_pages_summary(0)
+        .await?;
+    if let Some(active) = journal.manager.get_active_page(0).await {
+        pages.push(JournalPageSummary {
+            page_id: active.page_id,
+            level: active.level,
+            creation_timestamp: active.creation_timestamp,
+            end_time: active.end_time,
+            page_hash: active.page_hash,
+        });
+    }
+    pages.sort_by(|a, b| b.page_id.cmp(&a.page_id));
+    for summary in pages {
+        if let Some(page) = journal
+            .query
+            .storage()
+            .load_page(summary.level, summary.page_id)
+            .await?
+        {
+            if let crate::core::page::PageContent::Leaves(leaves) = page.content {
+                for leaf in leaves.iter().rev() {
+                    if leaf.container_id == container {
+                        return Ok(Some(leaf.leaf_hash));
+                    }
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+async fn append_chained_leaf(
+    journal: &Journal,
+    container: &str,
+    timestamp: DateTime<Utc>,
+    payload: serde_json::Value,
+    last_hash: &mut Option<[u8; 32]>,
+) -> CJResult<()> {
+    let parent = last_hash.map(PageContentHash::LeafHash);
+    if let PageContentHash::LeafHash(h) = journal
+        .append_leaf(timestamp, parent, container.to_string(), payload)
+        .await?
+    {
+        *last_hash = Some(h);
+    }
+    let mut map = LAST_HASHES.lock().await;
+    if let Some(h) = *last_hash {
+        map.insert(container.to_string(), h);
+    }
+    Ok(())
+}
+
 async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> {
     use crate::turnstile::Turnstile;
     let mut ts = Turnstile::new("00".repeat(32), 1);
     let mut rng = StdRng::seed_from_u64(42);
+    let mut last_hash = get_last_leaf_hash(journal, container).await?;
 
     #[derive(Clone)]
     struct DemoEvent {
@@ -1050,12 +1195,22 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
 
     let mut events: Vec<DemoEvent> = Vec::new();
     let mut create_times = Vec::new();
+    let mut update_counts = vec![0u32; 50];
+
+    fn field_message(idx: usize, count: u32) -> String {
+        format!(
+            "I am data in field {}. I have been updated {} times now.",
+            idx + 1,
+            count
+        )
+    }
+
     for i in 0..50 {
         let offset = rng.gen_range(0..(365 * 15)) as i64;
         let ts = start + Duration::days(offset);
         create_times.push(ts);
         let field = format!("field{}", i + 1);
-        let value = format!("{}_init", field);
+        let value = field_message(i, update_counts[i]);
         events.push(DemoEvent {
             ts,
             field,
@@ -1073,7 +1228,8 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
                 chrono::NaiveDateTime::from_timestamp_opt(seconds, 0).unwrap(),
                 Utc,
             );
-            let value = format!("{}_upd{}", field, rng.gen_range(0..1000));
+            update_counts[i] += 1;
+            let value = field_message(i, update_counts[i]);
             events.push(DemoEvent {
                 ts,
                 field: field.clone(),
@@ -1097,14 +1253,26 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
         events[update_indices[1]].error = true;
         let mal_ts = start + Duration::seconds(rng.gen_range(0..(365 * 20 * 24 * 3600)) as i64);
         if ts.append("{", mal_ts.timestamp() as u64).is_err() {
-            journal
-                .append_leaf(
-                    mal_ts + Duration::seconds(1),
-                    None,
-                    container.to_string(),
-                    json!({"log":"malformed packet"}),
-                )
-                .await?;
+            append_chained_leaf(
+                journal,
+                container,
+                mal_ts + Duration::seconds(1),
+                json!({"log":"malformed packet"}),
+                &mut last_hash,
+            )
+            .await?;
+        }
+        // Simulate a network error by attempting to connect to an unreachable port
+        use std::net::TcpStream;
+        if let Err(e) = TcpStream::connect("127.0.0.1:9") {
+            append_chained_leaf(
+                journal,
+                container,
+                mal_ts + Duration::seconds(2),
+                json!({"log": format!("network error: {}", e)}),
+                &mut last_hash,
+            )
+            .await?;
         }
     }
 
@@ -1113,28 +1281,26 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
         let ticket = ts.append(&payload.to_string(), event.ts.timestamp() as u64)?;
         if event.error {
             ts.confirm_ticket(&ticket, false, Some("db error"))?;
-            journal
-                .append_leaf(
-                    event.ts,
-                    None,
-                    container.to_string(),
-                    json!({"log":"db error"}),
-                )
-                .await?;
-            journal
-                .append_leaf(
-                    event.ts + Duration::seconds(1),
-                    None,
-                    container.to_string(),
-                    payload.clone(),
-                )
-                .await?;
+            append_chained_leaf(
+                journal,
+                container,
+                event.ts,
+                json!({"log":"db error"}),
+                &mut last_hash,
+            )
+            .await?;
+            append_chained_leaf(
+                journal,
+                container,
+                event.ts + Duration::seconds(1),
+                payload.clone(),
+                &mut last_hash,
+            )
+            .await?;
             ts.confirm_ticket(&ticket, true, None)?;
         } else {
             ts.confirm_ticket(&ticket, true, None)?;
-            journal
-                .append_leaf(event.ts, None, container.to_string(), payload)
-                .await?;
+            append_chained_leaf(journal, container, event.ts, payload, &mut last_hash).await?;
         }
     }
     Ok(())
