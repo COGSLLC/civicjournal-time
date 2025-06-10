@@ -1133,3 +1133,40 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_parse_duration_spec_valid() {
+        assert_eq!(parse_duration_spec("5d").unwrap(), Duration::days(5));
+        assert_eq!(parse_duration_spec("2m").unwrap(), Duration::days(60));
+        assert_eq!(parse_duration_spec("1y").unwrap(), Duration::days(365));
+    }
+
+    #[test]
+    fn test_parse_duration_spec_invalid() {
+        assert!(parse_duration_spec("5x").is_err());
+        assert!(parse_duration_spec("12").is_err());
+        assert!(parse_duration_spec("x").is_err());
+    }
+
+    #[test]
+    fn test_cleanup_demo_removes_directory() {
+        use crate::config::Config;
+        use crate::StorageType;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("demo");
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("dummy"), b"test").unwrap();
+
+        let mut cfg = Config::default();
+        cfg.storage.storage_type = StorageType::File;
+        cfg.storage.base_path = path.to_str().unwrap().to_string();
+
+        cleanup_demo(&cfg).unwrap();
+        assert!(!path.exists());
+    }
+}
