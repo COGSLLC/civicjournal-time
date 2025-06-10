@@ -6,9 +6,10 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tokio_postgres::NoTls;
 use std::path::PathBuf;
-use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
+use pg_embed::pg_fetch::{PgFetchSettings, PostgresVersion};
 use pg_embed::pg_enums::PgAuthMethod;
 use pg_embed::postgres::{PgEmbed, PgSettings};
+use users::get_current_uid;
 
 pub enum PgHandle {
     Docker(String),
@@ -60,6 +61,11 @@ pub async fn launch_postgres() -> CJResult<(String, PgHandle)> {
         }
         warn!("Docker not available or failed to start Postgres, falling back to embedded server");
     }
+    if get_current_uid() == 0 {
+        return Err(crate::CJError::new(
+            "embedded PostgreSQL cannot run as root. Please run the demo as a non-root user or enable Docker.".to_string(),
+        ));
+    }
     info!("Starting embedded PostgreSQL");
     let settings = PgSettings {
         database_dir: PathBuf::from("target/pg_demo"),
@@ -71,7 +77,12 @@ pub async fn launch_postgres() -> CJResult<(String, PgHandle)> {
         timeout: Some(Duration::from_secs(15)),
         migration_dir: None,
     };
-    let fetch = PgFetchSettings { version: PG_V15, ..Default::default() };
+    // PG_V15 points to Postgres 15.1 which has been removed from Maven Central.
+    // Explicitly specify a newer available version to avoid download errors.
+    let fetch = PgFetchSettings {
+        version: PostgresVersion("15.7.0"),
+        ..Default::default()
+    };
     let mut pg = PgEmbed::new(settings, fetch)
         .await
         .map_err(|e| crate::CJError::new(e.to_string()))?;
