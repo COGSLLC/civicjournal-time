@@ -59,6 +59,17 @@ impl PageIdGenerator {
     pub fn next(&self) -> u64 {
         self.counter.fetch_add(1, Ordering::SeqCst)
     }
+
+    /// Reverts the last issued page ID if it matches the provided value.
+    ///
+    /// This is used when a newly created page ends up being discarded without
+    /// being stored, ensuring page numbers remain sequential without gaps.
+    pub fn revert(&self, id: u64) {
+        let current = self.counter.load(Ordering::SeqCst);
+        if id + 1 == current {
+            self.counter.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
 }
 
 

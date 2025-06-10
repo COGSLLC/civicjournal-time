@@ -810,6 +810,7 @@ Ok(original_page_id)
             active_pages_guard.remove(&parent_level_idx);
             // Do not store, do not update last_finalized_*, do not recurse.
             drop(active_pages_guard);
+            self.page_id_gen.revert(parent_page.page_id);
             return Ok(());
         } else {
             // Page is empty but NOT over age. Keep it active.
@@ -911,6 +912,7 @@ Ok(original_page_id)
             log::debug!("[FINALIZE_HELPER] Page L{}P{} is empty. Discarding without storage or rollup.", page_to_finalize.level, page_to_finalize.page_id);
             // An empty page that was active and became unsuitable (e.g. aged out while empty)
             // is simply removed from active_pages by the caller and not processed further here.
+            self.page_id_gen.revert(page_to_finalize.page_id);
             return Ok(());
         }
 
