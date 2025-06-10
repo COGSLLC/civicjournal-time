@@ -8,10 +8,13 @@
 use clap::{Parser, Subcommand};
 use crate::{init, CJResult};
 use crate::api::async_api::Journal;
+#[cfg(feature = "demo")]
+mod auto_db;
 use chrono::{DateTime, Utc, Duration};
 use tokio_postgres::NoTls;
 use rand::{SeedableRng, Rng};
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use fake::{Fake, faker::lorem::en::Sentence};
 use serde_json::json;
 use hex;
@@ -381,6 +384,7 @@ fn show_help(stdout: &mut io::Stdout) -> io::Result<()> {
     writeln!(stdout, "R : revert database")?;
     writeln!(stdout, "F : find leaf by id")?;
     writeln!(stdout, "D : display database state")?;
+    writeln!(stdout, "L : view log entries")?;
     writeln!(stdout, "Q : quit")?;
     writeln!(stdout, "Press any key to continue...")?;
     execute!(stdout, SetForegroundColor(Color::White))?;
@@ -449,6 +453,45 @@ async fn display_db_prompt(journal: &Journal, container: &str) -> CJResult<()> {
     Ok(())
 }
 
+async fn log_viewer_prompt(journal: &Journal, container: &str) -> CJResult<()> {
+    let logs_all = collect_leaves(journal, container).await?;
+    let logs: Vec<_> = logs_all
+        .into_iter()
+        .filter(|l| l.delta_payload.get("log").is_some())
+        .collect();
+    if logs.is_empty() {
+        execute!(io::stdout(), cursor::MoveTo(0,0), Clear(ClearType::All))?;
+        println!("No log entries found.");
+        let _ = read_line("Press Enter to continue...");
+        return Ok(());
+    }
+    let mut idx: usize = 0;
+    let mut stdout = io::stdout();
+    loop {
+        execute!(stdout, cursor::MoveTo(0,0), Clear(ClearType::All), SetForegroundColor(Color::White))?;
+        let leaf = &logs[idx];
+        let msg = leaf.delta_payload.get("log").and_then(|v| v.as_str()).unwrap_or("log");
+        writeln!(stdout, "Log entry {}/{}", idx + 1, logs.len())?;
+        writeln!(stdout, "Leaf #{} @ {}", leaf.leaf_id, leaf.timestamp.to_rfc3339())?;
+        writeln!(stdout, "Message: {}", msg)?;
+        execute!(stdout, SetForegroundColor(Color::Grey))?;
+        writeln!(stdout, "[← prev] [→ next] [Q quit]")?;
+        execute!(stdout, SetForegroundColor(Color::White))?;
+        stdout.flush()?;
+        if event::poll(StdDuration::from_millis(200))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Left => if idx > 0 { idx -= 1; },
+                    KeyCode::Right => if idx + 1 < logs.len() { idx += 1; },
+                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn render_nav(stdout: &mut io::Stdout, container: &str, level: u8, idx: usize, leaves: &[crate::core::leaf::JournalLeaf], journal: &Journal) -> CJResult<()> {
     execute!(stdout, cursor::MoveTo(0,0), Clear(ClearType::All), SetForegroundColor(Color::White))?;
     if level == 0 {
@@ -461,7 +504,7 @@ async fn render_nav(stdout: &mut io::Stdout, container: &str, level: u8, idx: us
         writeln!(stdout, "Payload: {}", serde_json::to_string(&leaf.delta_payload).unwrap_or_default())?;
         writeln!(stdout, "Hash: {}", hex::encode(leaf.leaf_hash))?;
         execute!(stdout, SetForegroundColor(Color::Grey))?;
-        writeln!(stdout, "[D display DB] [S state] [R revert] [F find] [H help] [Q quit]")?;
+        writeln!(stdout, "[D display DB] [S state] [R revert] [F find] [L logs] [H help] [Q quit]")?;
         execute!(stdout, SetForegroundColor(Color::White))?;
     } else {
         let leaf = &leaves[idx];
@@ -475,7 +518,7 @@ async fn render_nav(stdout: &mut io::Stdout, container: &str, level: u8, idx: us
             writeln!(stdout, "End: {}", page.end_time.to_rfc3339())?;
             writeln!(stdout, "Hash: {}", hex::encode(page.page_hash))?;
             execute!(stdout, SetForegroundColor(Color::Grey))?;
-            writeln!(stdout, "[D display DB] [S state] [R revert] [F find] [H help] [Q quit]")?;
+            writeln!(stdout, "[D display DB] [S state] [R revert] [F find] [L logs] [H help] [Q quit]")?;
             execute!(stdout, SetForegroundColor(Color::White))?;
         } else {
             writeln!(stdout, "No page at level {}", level)?;
@@ -524,6 +567,7 @@ async fn nav_cmd(journal: &Journal, container: &str, idx: &mut usize, level: &mu
                     KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; needs_render = true; },
                     KeyCode::Char('f') | KeyCode::Char('F') => { if let Some(n) = search_prompt(&leaves).await? { *idx = n; needs_render = true; } },
                     KeyCode::Char('d') | KeyCode::Char('D') => { display_db_prompt(journal, container).await?; needs_render = true; },
+                    KeyCode::Char('l') | KeyCode::Char('L') => { log_viewer_prompt(journal, container).await?; needs_render = true; },
                     _ => {}
                 }
             }
@@ -539,12 +583,16 @@ async fn run_demo(config: &'static crate::Config) -> CJResult<()> {
         crate::StorageType::File => !std::path::Path::new(&config.storage.base_path).exists(),
         _ => false,
     };
+    let (db_url, handle) = auto_db::launch_postgres().await?;
+    println!("PostgreSQL running at {}", db_url);
     let journal = Journal::new(config).await?;
     if need_gen {
         println!("Generating demo data...");
         generate_demo_data(&journal, "demoDB").await?;
     }
-    demo_app(&journal, "demoDB").await
+    let r = demo_app(&journal, "demoDB").await;
+    drop(handle);
+    r
 }
 
 async fn demo_app(journal: &Journal, container: &str) -> CJResult<()> {
@@ -574,6 +622,7 @@ async fn demo_app(journal: &Journal, container: &str) -> CJResult<()> {
                     KeyCode::Char('s') | KeyCode::Char('S') => { show_state_prompt(journal, container).await?; needs_render = true; }
                     KeyCode::Char('r') | KeyCode::Char('R') => { revert_prompt(journal, container).await?; needs_render = true; }
                     KeyCode::Char('h') | KeyCode::Char('H') => { show_help(&mut stdout)?; needs_render = true; }
+                    KeyCode::Char('l') | KeyCode::Char('L') => { log_viewer_prompt(journal, container).await?; needs_render = true; }
                     KeyCode::Char('q') | KeyCode::Char('Q') => break,
                     _ => {}
                 }
@@ -593,12 +642,12 @@ fn render_menu(stdout: &mut io::Stdout) -> io::Result<()> {
     writeln!(stdout, "D : display database state")?;
     writeln!(stdout, "S : show state at timestamp")?;
     writeln!(stdout, "R : revert database")?;
+    writeln!(stdout, "L : view log entries")?;
     writeln!(stdout, "H : help")?;
     writeln!(stdout, "Q : quit")?;
     execute!(stdout, SetForegroundColor(Color::White))?;
     stdout.flush()?;
     Ok(())
-
 }
 
 fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
@@ -614,33 +663,72 @@ fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
 async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> {
     use crate::turnstile::Turnstile;
     let mut ts = Turnstile::new("00".repeat(32), 1);
-    let mut ts_time = Utc::now() - Duration::days(365 * 20);
+    let mut rng = StdRng::seed_from_u64(42);
 
-    for year in 0..20 {
-        for field in 1..=50 {
-            let name = format!("field{}", field);
-            let val = format!("{}_y{}", name, year);
-            let payload = json!({ name.clone(): val });
-            let ticket = ts.append(&payload.to_string(), ts_time.timestamp() as u64)?;
-            if year == 0 && field == 1 {
-                ts.confirm_ticket(&ticket, false, Some("db error"))?;
-                journal.append_leaf(ts_time, None, container.to_string(), json!({"log":"db error"})).await?;
-                journal.append_leaf(ts_time + Duration::seconds(1), None, container.to_string(), payload.clone()).await?;
-                ts.confirm_ticket(&ticket, true, None)?;
-            } else {
-                ts.confirm_ticket(&ticket, true, None)?;
-                journal.append_leaf(ts_time, None, container.to_string(), payload).await?;
-            }
-            ts_time += Duration::days(1);
+    #[derive(Clone)]
+    struct DemoEvent {
+        ts: DateTime<Utc>,
+        field: String,
+        value: String,
+        error: bool,
+    }
+
+    let start = Utc::now() - Duration::days(365 * 20);
+    let end = Utc::now();
+
+    let mut events: Vec<DemoEvent> = Vec::new();
+    let mut create_times = Vec::new();
+    for i in 0..20 {
+        let offset = rng.gen_range(0..(365 * 15)) as i64;
+        let ts = start + Duration::days(offset);
+        create_times.push(ts);
+        let field = format!("field{}", i + 1);
+        let value = format!("{}_init", field);
+        events.push(DemoEvent { ts, field, value, error: false });
+    }
+
+    for (i, &created) in create_times.iter().enumerate() {
+        let field = format!("field{}", i + 1);
+        let updates = rng.gen_range(1..=3);
+        for _ in 0..updates {
+            let seconds = rng.gen_range(created.timestamp()..end.timestamp());
+            let ts = DateTime::<Utc>::from_utc(chrono::NaiveDateTime::from_timestamp_opt(seconds, 0).unwrap(), Utc);
+            let value = format!("{}_upd{}", field, rng.gen_range(0..1000));
+            events.push(DemoEvent { ts, field: field.clone(), value, error: false });
         }
-        ts_time += Duration::days(365 - 50); // move roughly one year ahead
     }
 
-    if ts.append("{", ts_time.timestamp() as u64).is_err() {
-        journal.append_leaf(ts_time + Duration::seconds(1), None, container.to_string(), json!({"log":"malformed packet"})).await?;
+    events.sort_by_key(|e| e.ts);
 
+    let mut update_indices: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.value.contains("upd"))
+        .map(|(i, _)| i)
+        .collect();
+    update_indices.shuffle(&mut rng);
+    if update_indices.len() >= 3 {
+        events[update_indices[0]].error = true;
+        events[update_indices[1]].error = true;
+        let mal_ts = start + Duration::seconds(rng.gen_range(0..(365 * 20 * 24 * 3600)) as i64);
+        if ts.append("{", mal_ts.timestamp() as u64).is_err() {
+            journal.append_leaf(mal_ts + Duration::seconds(1), None, container.to_string(), json!({"log":"malformed packet"})).await?;
+        }
     }
 
+    for event in events {
+        let payload = json!({ event.field.clone(): event.value });
+        let ticket = ts.append(&payload.to_string(), event.ts.timestamp() as u64)?;
+        if event.error {
+            ts.confirm_ticket(&ticket, false, Some("db error"))?;
+            journal.append_leaf(event.ts, None, container.to_string(), json!({"log":"db error"})).await?;
+            journal.append_leaf(event.ts + Duration::seconds(1), None, container.to_string(), payload.clone()).await?;
+            ts.confirm_ticket(&ticket, true, None)?;
+        } else {
+            ts.confirm_ticket(&ticket, true, None)?;
+            journal.append_leaf(event.ts, None, container.to_string(), payload).await?;
+        }
+    }
     Ok(())
 }
 
