@@ -5,7 +5,7 @@
 //! Each subcommand is currently a stub. Implementation will follow
 //! the specification in `DEMOMODE.md`.
 
-use crate::api::async_api::Journal;
+use crate::api::async_api::{Journal, PageContentHash};
 use crate::{init, CJResult};
 use clap::{Parser, Subcommand};
 #[cfg(feature = "demo")]
@@ -234,6 +234,7 @@ async fn simulate(
     use crate::turnstile::Turnstile;
     let mut ts_queue = Turnstile::new("00".repeat(32), 1);
 
+    let mut prev: Option<PageContentHash> = None;
     for i in 0..fields {
         let field_name = format!("field{}", i + 1);
         let offset = rng.gen_range(0..range_secs);
@@ -242,9 +243,12 @@ async fn simulate(
         let payload = json!({ field_name: val });
         let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64)?;
         ts_queue.confirm_ticket(&ticket, true, None)?;
-        journal
-            .append_leaf(ts, None, container.to_string(), payload)
+        let res = journal
+            .append_leaf(ts, prev.clone(), container.to_string(), payload)
             .await?;
+        if let PageContentHash::LeafHash(h) = res {
+            prev = Some(PageContentHash::LeafHash(h));
+        }
     }
     println!("Simulated {} fields over {}", fields, duration);
     Ok(())
@@ -1211,33 +1215,43 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
         }
     }
 
+    let mut prev: Option<PageContentHash> = None;
     for event in events {
         let payload = json!({ event.field.clone(): event.value });
         let ticket = ts.append(&payload.to_string(), event.ts.timestamp() as u64)?;
         if event.error {
             ts.confirm_ticket(&ticket, false, Some("db error"))?;
-            journal
+            let res1 = journal
                 .append_leaf(
                     event.ts,
-                    None,
+                    prev.clone(),
                     container.to_string(),
                     json!({"log":"db error"}),
                 )
                 .await?;
-            journal
+            if let PageContentHash::LeafHash(h) = res1 {
+                prev = Some(PageContentHash::LeafHash(h));
+            }
+            let res2 = journal
                 .append_leaf(
                     event.ts + Duration::seconds(1),
-                    None,
+                    prev.clone(),
                     container.to_string(),
                     payload.clone(),
                 )
                 .await?;
+            if let PageContentHash::LeafHash(h2) = res2 {
+                prev = Some(PageContentHash::LeafHash(h2));
+            }
             ts.confirm_ticket(&ticket, true, None)?;
         } else {
             ts.confirm_ticket(&ticket, true, None)?;
-            journal
-                .append_leaf(event.ts, None, container.to_string(), payload)
+            let res = journal
+                .append_leaf(event.ts, prev.clone(), container.to_string(), payload)
                 .await?;
+            if let PageContentHash::LeafHash(h) = res {
+                prev = Some(PageContentHash::LeafHash(h));
+            }
         }
     }
     Ok(())

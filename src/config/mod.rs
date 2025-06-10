@@ -19,7 +19,12 @@ mod validation_tests;
 mod config_mod_tests;
 
 // Publicly re-export key configuration types from the types module
-pub use crate::types::time::{LevelRollupConfig, TimeHierarchyConfig, TimeLevel};
+pub use crate::types::time::{
+    LevelRollupConfig,
+    TimeHierarchyConfig,
+    TimeLevel,
+    RollupContentType,
+};
 
 use directories::ProjectDirs;
 use std::{
@@ -299,7 +304,10 @@ impl Default for Config {
                     TimeLevel {
                         name: "hour".to_string(),
                         duration_seconds: 3600,
-                        rollup_config: LevelRollupConfig::default(),
+                        rollup_config: LevelRollupConfig {
+                            content_type: RollupContentType::NetPatches,
+                            ..LevelRollupConfig::default()
+                        },
                         retention_policy: None,
                     },
                     TimeLevel {
