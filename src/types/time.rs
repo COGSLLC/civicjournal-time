@@ -32,7 +32,7 @@ pub enum RollupContentType {
     /// - You need strong cryptographic integrity guarantees
     /// - Most queries don't require accessing the actual content of child pages
     ChildHashes,
-    
+
     /// Represents rolled-up content as a net state patch (ObjectID -> Field -> Value).
     ///
     /// This stores the net effect of all changes in child pages as a map of
@@ -99,13 +99,48 @@ impl Default for TimeHierarchyConfig {
         Self {
             levels: vec![
                 TimeLevel::new("raw", 1, LevelRollupConfig::default(), None), // Smallest duration, pages primarily finalize by count/age
-                TimeLevel::new("minute", 60, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
-                TimeLevel::new("hour", 3600, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
-                TimeLevel::new("day", 86400, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)),
-                TimeLevel::new("month", 2592000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 30 days
-                TimeLevel::new("year", 31536000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 365 days
-                TimeLevel::new("decade", 315360000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 10 years
-                TimeLevel::new("century", 3153600000, LevelRollupConfig::default(), Some(RollupRetentionPolicy::KeepIndefinitely)), // 100 years
+                TimeLevel::new(
+                    "minute",
+                    60,
+                    LevelRollupConfig::default(),
+                    Some(RollupRetentionPolicy::KeepIndefinitely),
+                ),
+                TimeLevel::new(
+                    "hour",
+                    3600,
+                    LevelRollupConfig::default(),
+                    Some(RollupRetentionPolicy::KeepIndefinitely),
+                ),
+                TimeLevel::new(
+                    "day",
+                    86400,
+                    LevelRollupConfig::default(),
+                    Some(RollupRetentionPolicy::KeepIndefinitely),
+                ),
+                TimeLevel::new(
+                    "month",
+                    2592000,
+                    LevelRollupConfig::default(),
+                    Some(RollupRetentionPolicy::KeepIndefinitely),
+                ), // 30 days
+                TimeLevel::new(
+                    "year",
+                    31536000,
+                    LevelRollupConfig::default(),
+                    Some(RollupRetentionPolicy::KeepIndefinitely),
+                ), // 365 days
+                TimeLevel::new(
+                    "decade",
+                    315360000,
+                    LevelRollupConfig::default(),
+                    Some(RollupRetentionPolicy::KeepIndefinitely),
+                ), // 10 years
+                TimeLevel::new(
+                    "century",
+                    3153600000,
+                    LevelRollupConfig::default(),
+                    Some(RollupRetentionPolicy::KeepIndefinitely),
+                ), // 100 years
             ],
         }
     }
@@ -113,7 +148,8 @@ impl Default for TimeHierarchyConfig {
 
 /// Configuration for roll-up operations at a specific time level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LevelRollupConfig { // Renamed from RollupConfig
+pub struct LevelRollupConfig {
+    // Renamed from RollupConfig
     /// Maximum number of items (leaves for L0, child payloads for L_N>0) before forcing a roll-up
     pub max_items_per_page: usize, // Renamed for clarity (was max_leaves_per_page)
     /// Maximum age of a page before it should be rolled up (in seconds)
@@ -121,15 +157,17 @@ pub struct LevelRollupConfig { // Renamed from RollupConfig
     /// Type of content to store in L_N > 0 pages for this level's parent
     /// (or how this level's pages are represented in its parent)
     pub content_type: RollupContentType, // New field
-    // force_rollup_on_shutdown has been removed from per-level config.
-    // It should be a global setting if needed.
+                                         // force_rollup_on_shutdown has been removed from per-level config.
+                                         // It should be a global setting if needed.
 }
 
 impl Default for LevelRollupConfig {
     fn default() -> Self {
         Self {
             max_items_per_page: 1000,
-            max_page_age_seconds: 3600, // 1 hour
+            // Age-based rollups disabled by default. Pages finalize when
+            // a new leaf arrives or the item count threshold is reached.
+            max_page_age_seconds: 0,
             content_type: RollupContentType::default(),
         }
     }

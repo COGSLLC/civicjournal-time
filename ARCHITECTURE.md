@@ -165,7 +165,7 @@ levels = [
 [rollup]
 # When to trigger roll-up operations
 max_leaves_per_page = 1000
-max_page_age_seconds = 3600  # 1 hour
+max_page_age_seconds = 0     # age-based rollup disabled
 force_rollup_on_shutdown = true
 
 [storage]

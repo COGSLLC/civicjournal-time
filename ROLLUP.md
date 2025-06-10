@@ -75,7 +75,7 @@ Each level (except the highest) can have its own rollup configuration:
 ```toml
 [[rollup.levels]]
 max_items_per_page = 1000      # Maximum leaves before rollup
-max_page_age_seconds = 3600    # Maximum age before rollup (1 hour)
+max_page_age_seconds = 0       # Age-based rollup disabled (finalize on activity)
 content_type = "ChildHashes"   # or "NetPatches"
 ```
 

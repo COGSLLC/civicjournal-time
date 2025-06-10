@@ -21,12 +21,11 @@ mod config_mod_tests;
 // Publicly re-export key configuration types from the types module
 pub use crate::types::time::{LevelRollupConfig, TimeHierarchyConfig, TimeLevel};
 
+use directories::ProjectDirs;
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
-use directories::ProjectDirs;
 
 use serde::{Deserialize, Serialize};
 
@@ -71,23 +70,22 @@ const APP_NAME: &str = "civicjournal-time";
 pub struct Config {
     /// Time hierarchy configuration
     pub time_hierarchy: TimeHierarchyConfig,
-    
+
     // The 'rollup' field (RollupConfig) has been removed.
     // Rollup settings are now per-level in TimeHierarchyConfig.levels[N].rollup_config (LevelRollupConfig).
     // The global 'force_rollup_on_shutdown' is now a direct field in Config.
-    
     /// Storage configuration
     pub storage: StorageConfig,
-    
+
     /// Compression configuration
     pub compression: CompressionConfig,
-    
+
     /// Logging configuration
     pub logging: LoggingConfig,
-    
+
     /// Metrics configuration
     pub metrics: MetricsConfig,
-    
+
     /// Retention policy configuration
     pub retention: RetentionConfig,
 
@@ -201,7 +199,7 @@ impl Default for RetentionConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            period_seconds: 0, // Keep forever by default
+            period_seconds: 0,              // Keep forever by default
             cleanup_interval_seconds: 3600, // 1 hour
         }
     }
@@ -292,10 +290,25 @@ impl Default for Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
                     TimeLevel::new("raw", 1, LevelRollupConfig::default(), None), // Smallest duration, pages primarily finalize by count/age
-                    TimeLevel { name: "minute".to_string(), duration_seconds: 60, rollup_config: LevelRollupConfig::default(), retention_policy: None },
-                    TimeLevel { name: "hour".to_string(), duration_seconds: 3600, rollup_config: LevelRollupConfig::default(), retention_policy: None },
-                    TimeLevel { name: "day".to_string(), duration_seconds: 86400, rollup_config: LevelRollupConfig::default(), retention_policy: None },
-                ]
+                    TimeLevel {
+                        name: "minute".to_string(),
+                        duration_seconds: 60,
+                        rollup_config: LevelRollupConfig::default(),
+                        retention_policy: None,
+                    },
+                    TimeLevel {
+                        name: "hour".to_string(),
+                        duration_seconds: 3600,
+                        rollup_config: LevelRollupConfig::default(),
+                        retention_policy: None,
+                    },
+                    TimeLevel {
+                        name: "day".to_string(),
+                        duration_seconds: 86400,
+                        rollup_config: LevelRollupConfig::default(),
+                        retention_policy: None,
+                    },
+                ],
             },
             storage: StorageConfig::default(),
             compression: CompressionConfig::default(),
@@ -328,33 +341,36 @@ impl Config {
     /// Returns an error if the configuration file exists but cannot be read or parsed.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         let path = path.as_ref();
-        
+
         // Try to load from the specified path
         match fs::read_to_string(path) {
             Ok(config_str) => {
                 let mut config: Config = toml::from_str(&config_str).map_err(|e| {
                     ConfigError::validation_error(format!("Failed to parse config file: {}", e))
                 })?;
-                
+
                 // Apply environment variable overrides
                 config.apply_env_vars()?;
-                
+
                 // Validate the configuration
                 config.validate()?;
-                
+
                 Ok(config)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                log::warn!("Config file not found at {}, using defaults", path.display());
+                log::warn!(
+                    "Config file not found at {}, using defaults",
+                    path.display()
+                );
                 let mut config = Self::default();
                 config.apply_env_vars()?;
                 Ok(config)
             }
-            Err(e) => {
-                Err(ConfigError::file_not_found(
-                    format!("Failed to read config file {}: {}", path.display(), e)
-                ))
-            }
+            Err(e) => Err(ConfigError::file_not_found(format!(
+                "Failed to read config file {}: {}",
+                path.display(),
+                e
+            ))),
         }
     }
 
@@ -373,20 +389,20 @@ impl Config {
                 if value.trim().is_empty() {
                     continue;
                 }
-                
+
                 // Handle environment variable overrides
                 match stripped.to_lowercase().as_str() {
                     "logging_level" => {
                         self.logging.level = value.parse().map_err(|_| {
                             ConfigError::invalid_value("logging.level", &value, "Invalid log level")
                         })?;
-                    },
+                    }
                     // Add more environment variable handlers as needed
                     _ => {}
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -425,7 +441,17 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.time_hierarchy.levels.len(), 4);
-        assert!(config.time_hierarchy.levels[0].rollup_config.max_items_per_page > 0);
-        assert!(config.time_hierarchy.levels[0].rollup_config.max_page_age_seconds > 0);
+        assert!(
+            config.time_hierarchy.levels[0]
+                .rollup_config
+                .max_items_per_page
+                > 0
+        );
+        assert_eq!(
+            config.time_hierarchy.levels[0]
+                .rollup_config
+                .max_page_age_seconds,
+            0
+        );
     }
 }
