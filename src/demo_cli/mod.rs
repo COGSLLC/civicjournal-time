@@ -358,7 +358,12 @@ async fn list_leaves(journal: &Journal, container: &str) -> CJResult<()> {
     Ok(())
 }
 
-async fn show_leaf(journal: &Journal, container: &str, leaf_id: u64, pretty: bool) -> CJResult<()> {
+async fn show_leaf(
+    journal: &Journal,
+    container: &str,
+    leaf_id: u64,
+    pretty: bool,
+) -> CJResult<()> {
     let mut pages = journal
         .query
         .storage()
@@ -389,12 +394,18 @@ async fn show_leaf(journal: &Journal, container: &str, leaf_id: u64, pretty: boo
                         } else {
                             serde_json::to_string(&leaf.delta_payload).unwrap_or_default()
                         };
+                        let prev = leaf
+                            .prev_hash
+                            .map(|h| hex::encode(h))
+                            .unwrap_or_else(|| "None".to_string());
                         println!(
-                            "Leaf {} @ {}\n{}",
+                            "Leaf {} @ {}",
                             leaf_id,
                             leaf.timestamp.to_rfc3339(),
-                            output
                         );
+                        println!("Prev: {}", prev);
+                        println!("Payload: {}", output);
+                        println!("Hash: {}", hex::encode(leaf.leaf_hash));
                         return Ok(());
                     }
                 }
@@ -424,18 +435,29 @@ async fn list_pages(journal: &Journal, level: u32) -> CJResult<()> {
 }
 
 async fn show_page(journal: &Journal, page_id: u64, raw: bool) -> CJResult<()> {
-    if let Some(page) = journal.query.storage().load_page(0, page_id).await? {
-        if raw {
-            println!("page_hash {}", hex::encode(page.page_hash));
-        } else {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&page).unwrap_or_default()
-            );
+    for level in 0u8..=6u8 {
+        if let Some(page) = journal.query.storage().load_page(level, page_id).await? {
+            if raw {
+                println!("{}", serde_json::to_string_pretty(&page).unwrap_or_default());
+            } else {
+                println!("Page L{}P{}", page.level, page.page_id);
+                println!("Start: {}", page.creation_timestamp.to_rfc3339());
+                println!("End: {}", page.end_time.to_rfc3339());
+                let prev = page
+                    .prev_page_hash
+                    .map(|h| hex::encode(h))
+                    .unwrap_or_else(|| "None".to_string());
+                println!("Prev: {}", prev);
+                println!("Merkle: {}", hex::encode(page.merkle_root));
+                println!("Hash: {}", hex::encode(page.page_hash));
+                if let crate::core::page::PageContent::NetPatches(ref p) = page.content {
+                    println!("NetPatch: {}", serde_json::to_string_pretty(p).unwrap_or_default());
+                }
+            }
+            return Ok(());
         }
-    } else {
-        println!("Page {} not found", page_id);
     }
+    println!("Page {} not found", page_id);
     Ok(())
 }
 
@@ -660,10 +682,51 @@ async fn display_db_prompt(journal: &Journal, container: &str) -> CJResult<()> {
     let state = journal
         .reconstruct_container_state(container, Utc::now())
         .await?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&state.state_data).unwrap_or_default()
-    );
+    use serde_json::Value;
+    use std::cmp::max;
+    use std::collections::BTreeMap;
+    let mut fields: Vec<(usize, String)> = Vec::new();
+    let mut other: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(map) = state.state_data.as_object() {
+        for (k, v) in map {
+            if k.starts_with("field") {
+                if let Ok(n) = k.trim_start_matches("field").parse::<usize>() {
+                    let val = match v {
+                        Value::String(s) => s.clone(),
+                        _ => v.to_string(),
+                    };
+                    fields.push((n, val));
+                } else {
+                    other.insert(k.clone(), v.to_string());
+                }
+            } else {
+                other.insert(k.clone(), v.to_string());
+            }
+        }
+    }
+    fields.sort_by_key(|(n, _)| *n);
+    let formatted: Vec<String> = fields
+        .iter()
+        .map(|(n, v)| format!("field{}: {}", n, v))
+        .collect();
+    let (term_w, _) = terminal::size().unwrap_or((80, 20));
+    let max_len: u16 = formatted.iter().map(|s| s.len() as u16).max().unwrap_or(0);
+    let col_width = max(max_len + 2, 20);
+    let cols = max(1, term_w / col_width);
+    let rows = (formatted.len() as u16 + cols - 1) / cols;
+    for r in 0..rows {
+        let mut line = String::new();
+        for c in 0..cols {
+            let idx = (c * rows + r) as usize;
+            if idx < formatted.len() {
+                line.push_str(&format!("{:<width$}", formatted[idx], width = col_width as usize));
+            }
+        }
+        println!("{}", line.trim_end());
+    }
+    for (k, v) in other {
+        println!("{}: {}", k, v);
+    }
     let _ = read_line("Press Enter to continue...");
     execute!(io::stdout(), Clear(ClearType::All))?;
     terminal::enable_raw_mode()?;
@@ -764,6 +827,11 @@ async fn render_nav(
             "Payload: {}",
             serde_json::to_string(&leaf.delta_payload).unwrap_or_default()
         )?;
+        let prev = leaf
+            .prev_hash
+            .map(|h| hex::encode(h))
+            .unwrap_or_else(|| "None".to_string());
+        writeln!(stdout, "Prev: {}", prev)?;
         writeln!(stdout, "Hash: {}", hex::encode(leaf.leaf_hash))?;
         execute!(stdout, SetForegroundColor(Color::Grey))?;
         writeln!(
@@ -781,7 +849,19 @@ async fn render_nav(
             execute!(stdout, SetForegroundColor(Color::White))?;
             writeln!(stdout, "Start: {}", page.creation_timestamp.to_rfc3339())?;
             writeln!(stdout, "End: {}", page.end_time.to_rfc3339())?;
+            let prev = page
+                .prev_page_hash
+                .map(|h| hex::encode(h))
+                .unwrap_or_else(|| "None".to_string());
+            writeln!(stdout, "Prev: {}", prev)?;
             writeln!(stdout, "Hash: {}", hex::encode(page.page_hash))?;
+            if let crate::core::page::PageContent::NetPatches(ref p) = page.content {
+                writeln!(
+                    stdout,
+                    "NetPatch: {}",
+                    serde_json::to_string_pretty(p).unwrap_or_default()
+                )?;
+            }
             execute!(stdout, SetForegroundColor(Color::Grey))?;
             writeln!(
                 stdout,
@@ -1050,12 +1130,22 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
 
     let mut events: Vec<DemoEvent> = Vec::new();
     let mut create_times = Vec::new();
+    let mut update_counts = vec![0u32; 50];
+
+    fn field_message(idx: usize, count: u32) -> String {
+        format!(
+            "I am data in field {}. I have been updated {} times now.",
+            idx + 1,
+            count
+        )
+    }
+
     for i in 0..50 {
         let offset = rng.gen_range(0..(365 * 15)) as i64;
         let ts = start + Duration::days(offset);
         create_times.push(ts);
         let field = format!("field{}", i + 1);
-        let value = format!("{}_init", field);
+        let value = field_message(i, update_counts[i]);
         events.push(DemoEvent {
             ts,
             field,
@@ -1073,7 +1163,8 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
                 chrono::NaiveDateTime::from_timestamp_opt(seconds, 0).unwrap(),
                 Utc,
             );
-            let value = format!("{}_upd{}", field, rng.gen_range(0..1000));
+            update_counts[i] += 1;
+            let value = field_message(i, update_counts[i]);
             events.push(DemoEvent {
                 ts,
                 field: field.clone(),
@@ -1103,6 +1194,18 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
                     None,
                     container.to_string(),
                     json!({"log":"malformed packet"}),
+                )
+                .await?;
+        }
+        // Simulate a network error by attempting to connect to an unreachable port
+        use std::net::TcpStream;
+        if let Err(e) = TcpStream::connect("127.0.0.1:9") {
+            journal
+                .append_leaf(
+                    mal_ts + Duration::seconds(2),
+                    None,
+                    container.to_string(),
+                    json!({"log": format!("network error: {}", e)}),
                 )
                 .await?;
         }
