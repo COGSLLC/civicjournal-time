@@ -871,6 +871,17 @@ mod tests {
                 patch_map.insert("obj1".to_string(), patch);
                 page1_1.merge_net_patches(patch_map, leaf_data_4.timestamp);
             }
+            RollupContentType::ChildHashesAndNetPatches => {
+                page1_1.add_thrall_hash(page0_1.page_hash, page0_1.end_time);
+                let mut patch = std::collections::HashMap::new();
+                patch.insert(
+                    "dummy_field".to_string(),
+                    serde_json::Value::String("dummy".to_string()),
+                );
+                let mut patch_map = std::collections::HashMap::new();
+                patch_map.insert("obj1".to_string(), patch);
+                page1_1.merge_net_patches(patch_map, leaf_data_4.timestamp);
+            }
         }
         page1_1.recalculate_merkle_root_and_page_hash();
         storage.store_page(&page1_1).await.expect("Failed to store page1_1");

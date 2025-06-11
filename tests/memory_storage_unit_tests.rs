@@ -102,7 +102,11 @@ async fn test_list_finalized_pages_summary() {
     let page1 = JournalPage::new(0, None, now, &cfg);
     let page2 = JournalPage::new(0, None, now + chrono::Duration::seconds(1), &cfg);
     let mut page3 = JournalPage::new(1, None, now, &cfg);
-    if let PageContent::ThrallHashes(ref mut v) = page3.content { v.push([1u8;32]); }
+    match &mut page3.content {
+        PageContent::ThrallHashes(v) => v.push([1u8;32]),
+        PageContent::ThrallHashesWithNetPatches { hashes, .. } => hashes.push([1u8;32]),
+        _ => panic!("L1 page content unexpected"),
+    }
     page3.recalculate_merkle_root_and_page_hash();
     storage.store_page(&page1).await.unwrap();
     storage.store_page(&page2).await.unwrap();
@@ -159,7 +163,11 @@ async fn test_load_leaf_by_hash_behavior() {
     l0.recalculate_merkle_root_and_page_hash();
     storage.store_page(&l0).await.unwrap();
     let mut l1 = JournalPage::new(1, None, now, &cfg);
-    if let PageContent::ThrallHashes(ref mut v) = l1.content { v.push([9u8;32]); }
+    match &mut l1.content {
+        PageContent::ThrallHashes(v) => v.push([9u8;32]),
+        PageContent::ThrallHashesWithNetPatches { hashes, .. } => hashes.push([9u8;32]),
+        _ => panic!("Expected thrall content"),
+    }
     l1.recalculate_merkle_root_and_page_hash();
     storage.store_page(&l1).await.unwrap();
     for lf in [&leaf1, &leaf2] {

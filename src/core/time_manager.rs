@@ -766,6 +766,11 @@ Ok(original_page_id)
                     );
                 }
             }
+                PageContent::ThrallHashesWithNetPatches { patches: child_patches, .. } => {
+                    if !child_patches.is_empty() {
+                        parent_page.merge_net_patches(child_patches, child_content_timestamp_for_parent);
+                    }
+                }
                 PageContent::ThrallHashes(_) => {
                     // Rolling up a ChildHashes page into a NetPatches page is problematic.
                     // This implies a misconfiguration or an unsupported rollup path.
@@ -778,6 +783,43 @@ Ok(original_page_id)
                     // Snapshots represent a full state and are not typically rolled up as deltas.
                     log::error!("[Rollup] Error: Cannot roll up PageContent::Snapshot into PageContent::NetPatches. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
                     // Consider this an error or skip adding content.
+                }
+            }
+        }
+        RollupContentType::ChildHashesAndNetPatches => {
+            // Always record the child hash
+            parent_page.add_thrall_hash(loaded_child_page.page_hash, child_content_timestamp_for_parent);
+            match loaded_child_page.content {
+                PageContent::NetPatches(child_patches) => {
+                    if !child_patches.is_empty() {
+                        parent_page.merge_net_patches(child_patches, child_content_timestamp_for_parent);
+                    }
+                }
+                PageContent::Leaves(leaves) => {
+                    let mut patches_from_leaves: std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>> = std::collections::HashMap::new();
+                    for leaf in leaves {
+                        if let serde_json::Value::Object(fields_map) = &leaf.delta_payload {
+                            let object_id_patches = patches_from_leaves.entry(leaf.container_id.clone()).or_default();
+                            for (field_name, field_value) in fields_map {
+                                object_id_patches.insert(field_name.clone(), field_value.clone());
+                            }
+                        }
+                    }
+                    if !patches_from_leaves.is_empty() {
+                        parent_page.merge_net_patches(patches_from_leaves, child_content_timestamp_for_parent);
+                    }
+                }
+                PageContent::ThrallHashesWithNetPatches { patches: child_patches, .. } => {
+                    if !child_patches.is_empty() {
+                        parent_page.merge_net_patches(child_patches, child_content_timestamp_for_parent);
+                    }
+                }
+                PageContent::ThrallHashes(_) => {
+                    // No patch info available
+                    log::warn!("[Rollup] Child page {} had only hashes when parent expects net patches as well.", loaded_child_page.page_id);
+                }
+                PageContent::Snapshot(_) => {
+                    log::error!("[Rollup] Error: Cannot roll up PageContent::Snapshot into ChildHashesAndNetPatches parent. Child page ID: {}. Parent Page ID: {}", loaded_child_page.page_id, parent_page.page_id);
                 }
             }
         }

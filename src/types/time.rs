@@ -44,11 +44,16 @@ pub enum RollupContentType {
     /// - You frequently query the latest state of objects
     /// - Storage efficiency is less critical than read performance
     NetPatches,
+
+    /// Represents rolled-up content that stores both the hashes of child pages
+    /// and a net patch summary. This provides cryptographic audit capability
+    /// while enabling swift state reconstruction.
+    ChildHashesAndNetPatches,
 }
 
 impl Default for RollupContentType {
     fn default() -> Self {
-        RollupContentType::ChildHashes // Default to existing behavior
+        RollupContentType::ChildHashesAndNetPatches
     }
 }
 

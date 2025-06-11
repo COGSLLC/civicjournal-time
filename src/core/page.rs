@@ -88,6 +88,13 @@ pub enum PageContent {
     /// Contains hashes of child pages (for non-leaf levels).
     /// Used when RollupContentType::ChildHashes is specified.
     ThrallHashes(Vec<[u8; 32]>),
+
+    /// Contains both hashes of child pages and a net patch summary.
+    /// Used when RollupContentType::ChildHashesAndNetPatches is specified.
+    ThrallHashesWithNetPatches {
+        hashes: Vec<[u8; 32]>,
+        patches: HashMap<String, HashMap<String, serde_json::Value>>,
+    },
     
     /// Contains net patches representing state changes (for non-leaf levels).
     /// Used when RollupContentType::NetPatches is specified.
@@ -226,6 +233,10 @@ impl JournalPage {
                     match content_type {
                         RollupContentType::ChildHashes => PageContent::ThrallHashes(Vec::new()),
                         RollupContentType::NetPatches => PageContent::NetPatches(HashMap::new()),
+                        RollupContentType::ChildHashesAndNetPatches => PageContent::ThrallHashesWithNetPatches {
+                            hashes: Vec::new(),
+                            patches: HashMap::new(),
+                        },
                     }
                 }
             },
@@ -274,7 +285,7 @@ impl JournalPage {
     }
 
     /// Adds a thrall page's hash to an L1+ page.
-    /// Panics if called on an L0 page or if content is not PageContent::ThrallHashes.
+    /// Panics if called on an L0 page or if content type does not support thrall hashes.
     pub(crate) fn add_thrall_hash(&mut self, thrall_page_hash: [u8; 32], content_timestamp: DateTime<Utc>) {
         if self.level == 0 {
             panic!("add_thrall_hash cannot be called on L0 pages.");
@@ -291,13 +302,24 @@ impl JournalPage {
                 }
                 hashes.push(thrall_page_hash);
             }
-            _ => panic!("Attempted to add thrall_hash to a page not containing PageContent::ThrallHashes."),
+            PageContent::ThrallHashesWithNetPatches { ref mut hashes, .. } => {
+                log::debug!("[ADD_THRALL_HASH_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
+                if self.first_child_ts.is_none() {
+                    self.first_child_ts = Some(content_timestamp);
+                }
+                log::debug!("[ADD_THRALL_HASH_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
+                if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
+                    self.last_child_ts = Some(content_timestamp);
+                }
+                hashes.push(thrall_page_hash);
+            }
+            _ => panic!("Attempted to add thrall_hash to a page without thrall hash support."),
         }
         // IMPORTANT: Merkle root and page_hash should be recalculated by the caller.
     }
 
     /// Merges NetPatches into an L1+ page.
-    /// Panics if called on an L0 page or if content is not PageContent::NetPatches.
+    /// Panics if called on an L0 page or if content type does not support net patches.
     pub(crate) fn merge_net_patches(&mut self, patches_to_merge: HashMap<String, HashMap<String, serde_json::Value>>, content_timestamp: DateTime<Utc>) {
         if self.level == 0 {
             panic!("merge_net_patches cannot be called on L0 pages.");
@@ -320,7 +342,24 @@ impl JournalPage {
                     self.last_child_ts = Some(content_timestamp);
                 }
             }
-            _ => panic!("Attempted to merge_net_patches into a page not containing PageContent::NetPatches."),
+            PageContent::ThrallHashesWithNetPatches { ref mut patches, .. } => {
+                for (object_id, field_patches) in patches_to_merge {
+                    let entry = patches.entry(object_id).or_insert_with(HashMap::new);
+                    for (field_name, value) in field_patches {
+                        entry.insert(field_name, value);
+                    }
+                }
+
+                log::debug!("[MERGE_NET_PATCHES_DBG] L{}P{}: Received content_timestamp = {}, current self.first_child_ts = {:?}", self.level, self.page_id, content_timestamp, self.first_child_ts);
+                if self.first_child_ts.is_none() {
+                    self.first_child_ts = Some(content_timestamp);
+                }
+                log::debug!("[MERGE_NET_PATCHES_DBG] L{}P{}: After update logic, self.first_child_ts = {:?}", self.level, self.page_id, self.first_child_ts);
+                if self.last_child_ts.is_none() || content_timestamp > self.last_child_ts.unwrap() {
+                    self.last_child_ts = Some(content_timestamp);
+                }
+            }
+            _ => panic!("Attempted to merge_net_patches into a page without net patch support."),
         }
         // IMPORTANT: Merkle root and page_hash should be recalculated by the caller.
     }
@@ -331,6 +370,7 @@ impl JournalPage {
         let actual_leaf_hashes: Vec<[u8; 32]> = match self.content {
             PageContent::Leaves(ref leaves) => leaves.iter().map(|leaf| leaf.leaf_hash).collect(),
             PageContent::ThrallHashes(ref hashes) => hashes.clone(),
+            PageContent::ThrallHashesWithNetPatches { ref hashes, .. } => hashes.clone(),
             PageContent::NetPatches(ref patches_map) => {
                 if patches_map.is_empty() {
                     Vec::new()
@@ -419,6 +459,7 @@ impl JournalPage {
         match &self.content {
             PageContent::Leaves(leaves) => leaves.len(),
             PageContent::ThrallHashes(hashes) => hashes.len(),
+            PageContent::ThrallHashesWithNetPatches { hashes, .. } => hashes.len(),
             PageContent::NetPatches(patches) => patches.len(), // Number of ObjectIDs
             PageContent::Snapshot(snapshot_payload) => snapshot_payload.container_states.len(), // Number of container states
         }
@@ -429,6 +470,7 @@ impl JournalPage {
         match &self.content {
             PageContent::Leaves(leaves) => leaves.is_empty(),
             PageContent::ThrallHashes(hashes) => hashes.is_empty(),
+            PageContent::ThrallHashesWithNetPatches { hashes, patches } => hashes.is_empty() && patches.is_empty(),
             PageContent::NetPatches(patches) => patches.is_empty(),
             PageContent::Snapshot(snapshot_payload) => snapshot_payload.container_states.is_empty(),
         }

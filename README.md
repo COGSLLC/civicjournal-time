@@ -307,12 +307,12 @@ levels = [
 [[rollup.levels]]
 max_items_per_page = 1000
 max_page_age_seconds = 0     # age-based rollup disabled
-content_type = "ChildHashes"  # or "NetPatches"
+content_type = "ChildHashesAndNetPatches"  # stores hashes and a net patch summary
 
 [[rollup.levels]]
 max_items_per_page = 500
 max_page_age_seconds = 86400  # 1 day
-content_type = "ChildHashes"
+content_type = "ChildHashesAndNetPatches"
 
 [storage]
 type = "file"  # or "memory"

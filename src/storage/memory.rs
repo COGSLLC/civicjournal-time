@@ -344,10 +344,10 @@ mod tests {
         // Create L1 page (should not be searched for leaves)
         let mut page1_l1 = JournalPage::new(1, None, now, &config);
         // JournalPage::new for L1 creates PageContent::ThrallHashes. Add a hash to it.
-        if let PageContent::ThrallHashes(ref mut hashes) = page1_l1.content {
-            hashes.push([8u8; 32]);
-        } else {
-            panic!("L1 page content is not ThrallHashes as expected");
+        match &mut page1_l1.content {
+            PageContent::ThrallHashes(hashes) => hashes.push([8u8; 32]),
+            PageContent::ThrallHashesWithNetPatches { hashes, .. } => hashes.push([8u8; 32]),
+            _ => panic!("L1 page content type unexpected"),
         }
         page1_l1.recalculate_merkle_root_and_page_hash();
         storage.store_page(&page1_l1).await.unwrap();
