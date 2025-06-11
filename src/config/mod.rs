@@ -299,7 +299,7 @@ impl Default for Config {
                         name: "minute".to_string(),
                         duration_seconds: 60,
                         rollup_config: LevelRollupConfig {
-                            content_type: RollupContentType::NetPatches,
+                            content_type: RollupContentType::ChildHashesAndNetPatches,
                             ..LevelRollupConfig::default()
                         },
                         retention_policy: None,
@@ -308,7 +308,7 @@ impl Default for Config {
                         name: "hour".to_string(),
                         duration_seconds: 3600,
                         rollup_config: LevelRollupConfig {
-                            content_type: RollupContentType::NetPatches,
+                            content_type: RollupContentType::ChildHashesAndNetPatches,
                             ..LevelRollupConfig::default()
                         },
                         retention_policy: None,

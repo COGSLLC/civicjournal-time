@@ -174,6 +174,10 @@ pub async fn get_leaf_inclusion_proof_with_hint(
                             // snapshot_payload.container_states_merkle_root or other hashes from its header,
                             // but that's not relevant to proving a *JournalLeaf* that isn't part of this snapshot's direct content type.
                         }
+                        crate::core::page::PageContent::ThrallHashesWithNetPatches { hashes, .. } => {
+                            // Page stores both hashes and patches but no raw leaves.
+                            leaf_hashes_in_page.extend(hashes.iter().cloned());
+                        }
                     }
 
                     if found_leaf_in_page_contents {

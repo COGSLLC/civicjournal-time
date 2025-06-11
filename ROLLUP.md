@@ -13,7 +13,7 @@ The rollup mechanism in CivicJournal-Time is responsible for efficiently managin
 
 - **Hierarchical Time-Based Organization**: Data is organized in a multi-level structure (minutes → hours → days → months → years → decades → centuries)
 - **Configurable Rollup Triggers**: Automatic rollups based on size and time thresholds
-- **Multiple Content Types**: Support for both child hashes and net patches in parent pages
+- **Multiple Content Types**: Parent pages store child hashes and may include a net patch summary for rapid state reconstruction
 - **Immutable and Verifiable**: Cryptographic hashing ensures data integrity
 - **Efficient Storage**: Configurable compression and retention policies
 - **Asynchronous Processing**: Non-blocking operations for high throughput
@@ -76,7 +76,7 @@ Each level (except the highest) can have its own rollup configuration:
 [[rollup.levels]]
 max_items_per_page = 1000      # Maximum leaves before rollup
 max_page_age_seconds = 0       # Age-based rollup disabled (finalize on activity)
-content_type = "ChildHashes"   # or "NetPatches"
+content_type = "ChildHashesAndNetPatches"   # store hashes and optional net patch
 ```
 
 ### Retention Policies
@@ -139,6 +139,11 @@ pub enum PageContent {
     ChildHashes(Vec<[u8; 32]>),
     /// Level 1+: Contains net patches
     NetPatches(Vec<[u8; 32]>),
+    /// Level 1+: Contains both hashes and a net patch summary
+    ThrallHashesWithNetPatches {
+        hashes: Vec<[u8; 32]>,
+        patches: HashMap<String, HashMap<String, serde_json::Value>>,
+    },
 }
 
 // From src/core/time_manager.rs
@@ -369,9 +374,9 @@ max_items_per_page = [1000, 500, 200, 100]         # Max items (leaves for L0, c
 max_page_age_seconds = [60, 3600, 86400, 2592000]   # Max age of a page before rollup.
 # Defines the type of content to store in L_N > 0 pages for this level's parent
 # (or how this level's pages are represented in its parent).
-# This corresponds to the `RollupContentType` enum (e.g., ChildHashes, NetPatches) in `LevelRollupConfig`.
+# This corresponds to the `RollupContentType` enum (e.g., ChildHashes, NetPatches, ChildHashesAndNetPatches) in `LevelRollupConfig`.
 # Example: content_types[N] refers to the content type of the parent of Level N pages.
-content_types = ["ChildHashes", "ChildHashes", "NetPatches", "NetPatches"] # Example values
+content_types = ["ChildHashes", "ChildHashesAndNetPatches", "ChildHashesAndNetPatches", "ChildHashesAndNetPatches"] # Example values
 ```
 
 **Notes:**
@@ -766,7 +771,7 @@ The rollup mechanism is fully implemented with the following characteristics:
 
 - **Page Storage**: Uses `.cjt` files with a 6-byte header (magic number, version, compression type).
 - **Compression**: Supports Zstd, Lz4, Snappy, or no compression (configurable).
-- **Content Types**: Supports both `ChildHashes` and `NetPatches` rollup strategies.
+- **Content Types**: Supports `ChildHashes`, `NetPatches`, and `ChildHashesAndNetPatches` rollup strategies.
 - **Error Handling**: Comprehensive error handling for storage operations, including simulation of storage errors for testing.
 - **Testing**: Extensive test coverage for rollup scenarios, including edge cases and error conditions.
 
