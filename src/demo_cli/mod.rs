@@ -418,12 +418,7 @@ async fn list_leaves(journal: &Journal, container: &str) -> CJResult<()> {
     Ok(())
 }
 
-async fn show_leaf(
-    journal: &Journal,
-    container: &str,
-    leaf_id: u64,
-    pretty: bool,
-) -> CJResult<()> {
+async fn show_leaf(journal: &Journal, container: &str, leaf_id: u64, pretty: bool) -> CJResult<()> {
     let mut pages = journal
         .query
         .storage()
@@ -458,11 +453,7 @@ async fn show_leaf(
                             .prev_hash
                             .map(|h| hex::encode(h))
                             .unwrap_or_else(|| "None".to_string());
-                        println!(
-                            "Leaf {} @ {}",
-                            leaf_id,
-                            leaf.timestamp.to_rfc3339(),
-                        );
+                        println!("Leaf {} @ {}", leaf_id, leaf.timestamp.to_rfc3339(),);
                         println!("Prev: {}", prev);
                         println!("Payload: {}", output);
                         println!("Hash: {}", hex::encode(leaf.leaf_hash));
@@ -498,7 +489,10 @@ async fn show_page(journal: &Journal, page_id: u64, raw: bool) -> CJResult<()> {
     for level in 0u8..=6u8 {
         if let Some(page) = journal.query.storage().load_page(level, page_id).await? {
             if raw {
-                println!("{}", serde_json::to_string_pretty(&page).unwrap_or_default());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&page).unwrap_or_default()
+                );
             } else {
                 println!("Page L{}P{}", page.level, page.page_id);
                 println!("Start: {}", page.creation_timestamp.to_rfc3339());
@@ -815,7 +809,11 @@ async fn display_db_prompt(journal: &Journal, container: &str) -> CJResult<()> {
         for c in 0..cols {
             let idx = (c * rows + r) as usize;
             if idx < formatted.len() {
-                line.push_str(&format!("{:<width$}", formatted[idx], width = col_width as usize));
+                line.push_str(&format!(
+                    "{:<width$}",
+                    formatted[idx],
+                    width = col_width as usize
+                ));
             }
         }
         println!("{}", line.trim_end());
@@ -956,12 +954,7 @@ async fn render_nav(
                 PageContent::Leaves(leaves) => {
                     writeln!(stdout, "Leaves ({}):", leaves.len())?;
                     for l in leaves.iter().take(5) {
-                        writeln!(
-                            stdout,
-                            "  #{:>6} {}",
-                            l.leaf_id,
-                            hex::encode(l.leaf_hash)
-                        )?;
+                        writeln!(stdout, "  #{:>6} {}", l.leaf_id, hex::encode(l.leaf_hash))?;
                     }
                     if leaves.len() > 5 {
                         writeln!(stdout, "  ... ({} total)", leaves.len())?;
@@ -1266,7 +1259,6 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
     let end = Utc::now();
 
     let mut events: Vec<DemoEvent> = Vec::new();
-    let mut create_times = Vec::new();
     let mut update_counts = vec![0u32; 50];
 
     fn field_message(idx: usize, count: u32) -> String {
@@ -1277,29 +1269,26 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
         )
     }
 
+    const UPDATES_PER_FIELD: usize = 500;
+
     for i in 0..50 {
-        let offset = rng.gen_range(0..(365 * 15)) as i64;
-        let ts = start + Duration::days(offset);
-        create_times.push(ts);
+        let offset = rng.gen_range(0..(365 * 2)) as i64;
+        let mut ts = start + Duration::days(offset);
         let field = format!("field{}", i + 1);
         let value = field_message(i, update_counts[i]);
         events.push(DemoEvent {
             ts,
-            field,
+            field: field.clone(),
             value,
             error: false,
         });
-    }
 
-    for (i, &created) in create_times.iter().enumerate() {
-        let field = format!("field{}", i + 1);
-        let updates = rng.gen_range(3..=6);
-        for _ in 0..updates {
-            let seconds = rng.gen_range(created.timestamp()..end.timestamp());
-            let ts = DateTime::<Utc>::from_utc(
-                chrono::NaiveDateTime::from_timestamp_opt(seconds, 0).unwrap(),
-                Utc,
-            );
+        for _ in 0..UPDATES_PER_FIELD {
+            let step = rng.gen_range(60..=3600 * 4);
+            ts += Duration::seconds(step);
+            if ts > end {
+                break;
+            }
             update_counts[i] += 1;
             let value = field_message(i, update_counts[i]);
             events.push(DemoEvent {
