@@ -1261,7 +1261,7 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
         error: bool,
     }
 
-    let start = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+    let start = Utc::now() - Duration::days(365 * 20);
 
     let mut events: Vec<DemoEvent> = Vec::new();
     let mut update_counts = vec![0u32; 10];
@@ -1279,7 +1279,7 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
     for i in 0..10 {
         let field = format!("field{}", i + 1);
         for _ in 0..UPDATES_PER_FIELD {
-            let day_offset = rng.gen_range(0..365) as i64;
+            let day_offset = rng.gen_range(0..(365 * 20)) as i64;
             let day_seconds = rng.gen_range(8 * 3600..18 * 3600) as i64;
             let ts = start + Duration::days(day_offset) + Duration::seconds(day_seconds);
             update_counts[i] += 1;
@@ -1314,7 +1314,7 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
     if update_indices.len() >= 3 {
         events[update_indices[0]].error = true;
         events[update_indices[1]].error = true;
-        let mal_ts = start + Duration::seconds(rng.gen_range(0..(365 * 24 * 3600)) as i64);
+        let mal_ts = start + Duration::seconds(rng.gen_range(0..(365 * 20 * 24 * 3600)) as i64);
         if ts.append("{", mal_ts.timestamp() as u64).is_err() {
             journal
                 .append_leaf(
