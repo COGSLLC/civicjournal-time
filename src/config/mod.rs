@@ -20,10 +20,7 @@ mod config_mod_tests;
 
 // Publicly re-export key configuration types from the types module
 pub use crate::types::time::{
-    LevelRollupConfig,
-    TimeHierarchyConfig,
-    TimeLevel,
-    RollupContentType,
+    LevelRollupConfig, RollupContentType, TimeHierarchyConfig, TimeLevel,
 };
 
 use directories::ProjectDirs;
@@ -294,29 +291,40 @@ impl Default for Config {
         Config {
             time_hierarchy: TimeHierarchyConfig {
                 levels: vec![
-                    TimeLevel::new("raw", 1, LevelRollupConfig::default(), None), // Smallest duration, pages primarily finalize by count/age
-                    TimeLevel {
-                        name: "minute".to_string(),
-                        duration_seconds: 60,
-                        rollup_config: LevelRollupConfig {
-                            content_type: RollupContentType::ChildHashesAndNetPatches,
-                            ..LevelRollupConfig::default()
-                        },
-                        retention_policy: None,
-                    },
-                    TimeLevel {
-                        name: "hour".to_string(),
-                        duration_seconds: 3600,
-                        rollup_config: LevelRollupConfig {
-                            content_type: RollupContentType::ChildHashesAndNetPatches,
-                            ..LevelRollupConfig::default()
-                        },
-                        retention_policy: None,
-                    },
                     TimeLevel {
                         name: "day".to_string(),
-                        duration_seconds: 86400,
-                        rollup_config: LevelRollupConfig::default(),
+                        duration_seconds: 86_400,
+                        rollup_config: LevelRollupConfig {
+                            content_type: RollupContentType::ChildHashes,
+                            ..LevelRollupConfig::default()
+                        },
+                        retention_policy: None,
+                    },
+                    TimeLevel {
+                        name: "week".to_string(),
+                        duration_seconds: 604_800,
+                        rollup_config: LevelRollupConfig {
+                            content_type: RollupContentType::ChildHashes,
+                            ..LevelRollupConfig::default()
+                        },
+                        retention_policy: None,
+                    },
+                    TimeLevel {
+                        name: "month".to_string(),
+                        duration_seconds: 2_592_000, // 30 days
+                        rollup_config: LevelRollupConfig {
+                            content_type: RollupContentType::ChildHashes,
+                            ..LevelRollupConfig::default()
+                        },
+                        retention_policy: None,
+                    },
+                    TimeLevel {
+                        name: "year".to_string(),
+                        duration_seconds: 31_536_000, // 365 days
+                        rollup_config: LevelRollupConfig {
+                            content_type: RollupContentType::NetPatches,
+                            ..LevelRollupConfig::default()
+                        },
                         retention_policy: None,
                     },
                 ],
