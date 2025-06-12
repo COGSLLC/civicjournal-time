@@ -1,4 +1,4 @@
-⚠️ **BETA (v0.4.0)** — Core rollup, turnstile, snapshot, and query features are stable. Full hierarchical rollups and the query engine are fully operational for typical use cases.
+⚠️ **ALPHA (v0.4.0)** — Full hierarchical rollups and the query engine are fully operational for experimental use cases.
 # CivicJournal-Time
 
 **An append-only, verifiable ledger for robust audit trails and time-series data management.**
