@@ -47,7 +47,7 @@ async fn test_store_load_no_compression_magic() {
     let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
     let page = make_page(0, &cfg);
     storage.store_page(&page).await.unwrap();
-    let file_path = dir.path().join("journal/level_0/page_0.cjt");
+    let file_path = dir.path().join("journal/level_0/page_00000000.cjt");
     let bytes = std::fs::read(&file_path).unwrap();
     assert_eq!(&bytes[0..4], b"CJTP");
     let loaded = storage.load_page(0, 0).await.unwrap().unwrap();
@@ -77,7 +77,7 @@ async fn test_corrupt_header() {
     let storage = FileStorage::new(dir.path(), cfg.compression.clone()).await.unwrap();
     let page = make_page(0, &cfg);
     storage.store_page(&page).await.unwrap();
-    let file_path = dir.path().join("journal/level_0/page_0.cjt");
+    let file_path = dir.path().join("journal/level_0/page_00000000.cjt");
     {
         let mut data = std::fs::read(&file_path).unwrap();
         data[0] = b'X';
@@ -97,7 +97,7 @@ async fn test_load_page_too_short() {
 
     let level_dir = dir.path().join("journal/level_0");
     std::fs::create_dir_all(&level_dir).unwrap();
-    std::fs::write(level_dir.join("page_0.cjt"), b"CJTP").unwrap(); // less than 6 bytes
+    std::fs::write(level_dir.join("page_00000000.cjt"), b"CJTP").unwrap(); // less than 6 bytes
 
     let err = storage.load_page(0, 0).await.unwrap_err();
     assert!(matches!(err, CJError::InvalidFileFormat(_)));
@@ -264,8 +264,8 @@ async fn test_backup_non_empty_restore() {
     assert_eq!(files.len(), 2);
     let restore_dir = tempdir().unwrap();
     storage.restore_journal(&backup, &restore_dir.path().join("journal")).await.unwrap();
-    assert!(restore_dir.path().join("journal/level_0/page_0.cjt").exists());
-    assert!(restore_dir.path().join("journal/level_0/page_1.cjt").exists());
+    assert!(restore_dir.path().join("journal/level_0/page_00000000.cjt").exists());
+    assert!(restore_dir.path().join("journal/level_0/page_00000001.cjt").exists());
 }
 
 #[tokio::test]
@@ -300,7 +300,7 @@ async fn test_load_page_by_hash_skips_bad_files() {
     std::fs::create_dir_all(&level_dir).unwrap();
 
     std::fs::write(level_dir.join("page_bad.txt"), b"junk").unwrap();
-    std::fs::write(level_dir.join("page_0.cjt"), b"XXXX12").unwrap();
+    std::fs::write(level_dir.join("page_00000000.cjt"), b"XXXX12").unwrap();
 
     let res = storage.load_page_by_hash([9u8; 32]).await.unwrap();
     assert!(res.is_none());

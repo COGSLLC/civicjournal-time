@@ -152,7 +152,7 @@ impl FileStorage {
     /// Constructs the path for a specific journal page file.
     /// Path: `base_path/journal/level_<L>/page_<ID>.cjt[.compression_alg]`
     fn get_page_path(&self, level: u8, page_id: u64) -> PathBuf {
-        let filename = format!("page_{}.cjt", page_id);
+        let filename = format!("page_{:08}.cjt", page_id);
         self.base_path
             .join(JOURNAL_SUBDIR)
             .join(format!("level_{}", level))

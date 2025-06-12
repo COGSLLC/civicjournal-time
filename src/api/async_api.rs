@@ -27,7 +27,7 @@ pub struct Journal {
     /// Query engine used by the journal.
     pub query: crate::query::QueryEngine,
     /// Tracks the hash of the most recently appended leaf.
-    last_leaf_hash: Arc<Mutex<Option<[u8; 32]>>>,
+    pub last_leaf_hash: Arc<Mutex<Option<[u8; 32]>>>,
 }
 
 impl Journal {
@@ -505,6 +505,7 @@ mod tests {
         let journal = Journal {
             manager: manager_arc,
             query,
+            last_leaf_hash: Arc::new(Mutex::new(None)),
         };
 
         let timestamp = Utc::now();

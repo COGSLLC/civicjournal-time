@@ -256,7 +256,12 @@ async fn simulate(
             let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64 + 1)?;
             ts_queue.confirm_ticket(&ticket, true, None)?;
             let res = journal
-                .append_leaf(ts + Duration::seconds(1), prev.clone(), container.to_string(), payload)
+                .append_leaf(
+                    ts + Duration::seconds(1),
+                    prev.clone(),
+                    container.to_string(),
+                    payload,
+                )
                 .await?;
             if let PageContentHash::LeafHash(h) = res {
                 prev = Some(PageContentHash::LeafHash(h));
@@ -1244,6 +1249,7 @@ fn cleanup_demo(config: &crate::Config) -> CJResult<()> {
 
 async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> {
     use crate::turnstile::Turnstile;
+    use indicatif::{ProgressBar, ProgressStyle};
     let mut ts = Turnstile::new("00".repeat(32), 1);
     let mut rng = StdRng::seed_from_u64(42);
 
@@ -1256,10 +1262,9 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
     }
 
     let start = Utc::now() - Duration::days(365 * 20);
-    let end = Utc::now();
 
     let mut events: Vec<DemoEvent> = Vec::new();
-    let mut update_counts = vec![0u32; 50];
+    let mut update_counts = vec![0u32; 10];
 
     fn field_message(idx: usize, count: u32) -> String {
         format!(
@@ -1269,26 +1274,14 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
         )
     }
 
-    const UPDATES_PER_FIELD: usize = 500;
+    const UPDATES_PER_FIELD: usize = 100;
 
-    for i in 0..50 {
-        let offset = rng.gen_range(0..(365 * 2)) as i64;
-        let mut ts = start + Duration::days(offset);
+    for i in 0..10 {
         let field = format!("field{}", i + 1);
-        let value = field_message(i, update_counts[i]);
-        events.push(DemoEvent {
-            ts,
-            field: field.clone(),
-            value,
-            error: false,
-        });
-
         for _ in 0..UPDATES_PER_FIELD {
-            let step = rng.gen_range(60..=3600 * 4);
-            ts += Duration::seconds(step);
-            if ts > end {
-                break;
-            }
+            let day_offset = rng.gen_range(0..(365 * 20)) as i64;
+            let day_seconds = rng.gen_range(8 * 3600..18 * 3600) as i64;
+            let ts = start + Duration::days(day_offset) + Duration::seconds(day_seconds);
             update_counts[i] += 1;
             let value = field_message(i, update_counts[i]);
             events.push(DemoEvent {
@@ -1301,6 +1294,15 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
     }
 
     events.sort_by_key(|e| e.ts);
+
+    let pb = ProgressBar::new(events.len() as u64);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+        )
+        .unwrap(),
+    );
+    pb.enable_steady_tick(StdDuration::from_millis(100));
 
     let mut update_indices: Vec<usize> = events
         .iter()
@@ -1383,7 +1385,9 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
                 prev = Some(PageContentHash::LeafHash(h));
             }
         }
+        pb.inc(1);
     }
+    pb.finish_with_message("Data generation complete");
     Ok(())
 }
 
