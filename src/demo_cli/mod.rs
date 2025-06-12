@@ -454,8 +454,44 @@ async fn show_page(journal: &Journal, page_id: u64, raw: bool) -> CJResult<()> {
                 println!("Prev: {}", prev);
                 println!("Merkle: {}", hex::encode(page.merkle_root));
                 println!("Hash: {}", hex::encode(page.page_hash));
-                if let crate::core::page::PageContent::NetPatches(ref p) = page.content {
-                    println!("NetPatch: {}", serde_json::to_string_pretty(p).unwrap_or_default());
+                use crate::core::page::PageContent;
+                match &page.content {
+                    PageContent::Leaves(leaves) => {
+                        println!("Leaves ({}):", leaves.len());
+                        for leaf in leaves {
+                            println!(
+                                "  #{:>6} {} {}",
+                                leaf.leaf_id,
+                                leaf.timestamp.to_rfc3339(),
+                                hex::encode(leaf.leaf_hash)
+                            );
+                        }
+                    }
+                    PageContent::ThrallHashes(hashes) => {
+                        println!("Child Page Hashes ({}):", hashes.len());
+                        for h in hashes {
+                            println!("  {}", hex::encode(h));
+                        }
+                    }
+                    PageContent::NetPatches(patches) => {
+                        println!(
+                            "NetPatch: {}",
+                            serde_json::to_string_pretty(patches).unwrap_or_default()
+                        );
+                    }
+                    PageContent::ThrallHashesWithNetPatches { hashes, patches } => {
+                        println!("Child Page Hashes ({}):", hashes.len());
+                        for h in hashes {
+                            println!("  {}", hex::encode(h));
+                        }
+                        println!(
+                            "NetPatch: {}",
+                            serde_json::to_string_pretty(patches).unwrap_or_default()
+                        );
+                    }
+                    PageContent::Snapshot(_) => {
+                        println!("Snapshot page");
+                    }
                 }
             }
             return Ok(());
@@ -859,12 +895,53 @@ async fn render_nav(
                 .unwrap_or_else(|| "None".to_string());
             writeln!(stdout, "Prev: {}", prev)?;
             writeln!(stdout, "Hash: {}", hex::encode(page.page_hash))?;
-            if let crate::core::page::PageContent::NetPatches(ref p) = page.content {
-                writeln!(
-                    stdout,
-                    "NetPatch: {}",
-                    serde_json::to_string_pretty(p).unwrap_or_default()
-                )?;
+            use crate::core::page::PageContent;
+            match &page.content {
+                PageContent::Leaves(leaves) => {
+                    writeln!(stdout, "Leaves ({}):", leaves.len())?;
+                    for l in leaves.iter().take(5) {
+                        writeln!(
+                            stdout,
+                            "  #{:>6} {}",
+                            l.leaf_id,
+                            hex::encode(l.leaf_hash)
+                        )?;
+                    }
+                    if leaves.len() > 5 {
+                        writeln!(stdout, "  ... ({} total)", leaves.len())?;
+                    }
+                }
+                PageContent::ThrallHashes(hashes) => {
+                    writeln!(stdout, "Child Hashes ({}):", hashes.len())?;
+                    for h in hashes.iter().take(5) {
+                        writeln!(stdout, "  {}", hex::encode(h))?;
+                    }
+                    if hashes.len() > 5 {
+                        writeln!(stdout, "  ... ({} total)", hashes.len())?;
+                    }
+                }
+                PageContent::NetPatches(p) => {
+                    writeln!(
+                        stdout,
+                        "NetPatch: {}",
+                        serde_json::to_string_pretty(p).unwrap_or_default()
+                    )?;
+                }
+                PageContent::ThrallHashesWithNetPatches { hashes, patches } => {
+                    writeln!(stdout, "Child Hashes ({}):", hashes.len())?;
+                    for h in hashes.iter().take(5) {
+                        writeln!(stdout, "  {}", hex::encode(h))?;
+                    }
+                    if hashes.len() > 5 {
+                        writeln!(stdout, "  ... ({} total)", hashes.len())?;
+                    }
+                    writeln!(
+                        stdout,
+                        "NetPatch: {}",
+                        serde_json::to_string_pretty(patches).unwrap_or_default()
+                    )?;
+                }
+                PageContent::Snapshot(_) => {}
             }
             execute!(stdout, SetForegroundColor(Color::Grey))?;
             writeln!(
