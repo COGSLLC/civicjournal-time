@@ -304,7 +304,7 @@ impl Default for Config {
                         name: "week".to_string(),
                         duration_seconds: 604_800,
                         rollup_config: LevelRollupConfig {
-                            content_type: RollupContentType::ChildHashes,
+                            content_type: RollupContentType::ChildHashesAndNetPatches,
                             ..LevelRollupConfig::default()
                         },
                         retention_policy: None,
@@ -313,7 +313,7 @@ impl Default for Config {
                         name: "month".to_string(),
                         duration_seconds: 2_592_000, // 30 days
                         rollup_config: LevelRollupConfig {
-                            content_type: RollupContentType::ChildHashes,
+                            content_type: RollupContentType::ChildHashesAndNetPatches,
                             ..LevelRollupConfig::default()
                         },
                         retention_policy: None,

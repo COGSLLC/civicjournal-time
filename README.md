@@ -131,6 +131,11 @@ let mut journal = Journal::new(cfg)?;
 journal.append_leaf("example", serde_json::json!({"msg": "hello"}))?;
 ```
 
+The built-in default uses a four-level hierarchy (`day` → `week` → `month` → `year`).
+Both the week and month levels store child hashes **and** net patch summaries so
+that the year level (which stores only net patches) can roll up without errors.
+
+
 
 ## Project Structure
 
