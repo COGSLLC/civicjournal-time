@@ -102,7 +102,22 @@ fn test_retry_next_pending_success() {
     let rc = ts.retry_next_pending(|_, _, _| 1).unwrap();
     assert_eq!(rc, 0);
     assert_eq!(ts.pending_count(), 0);
-    assert_eq!(ts.latest_leaf_hash(), ticket);
+    assert_eq!(ts.success_events().len(), 1);
+    let ev = &ts.success_events()[0];
+    assert_eq!(ev.orig_hash, ticket);
+    assert_eq!(ts.latest_leaf_hash(), ev.leaf_hash);
+    assert!(ts.leaf_exists(&ticket).unwrap());
+}
+
+#[test]
+fn test_confirm_failure_then_retry_success_logs_event() {
+    let mut ts = Turnstile::new("00".repeat(32), 2);
+    let ticket = ts.append("{\"b\":1}", 1).unwrap();
+    ts.confirm_ticket(&ticket, false, Some("db down")).unwrap();
+    let rc = ts.retry_next_pending(|_, _, _| 1).unwrap();
+    assert_eq!(rc, 0);
+    assert_eq!(ts.success_events().len(), 1);
+    assert_eq!(ts.success_events()[0].orig_hash, ticket);
 }
 
 #[test]

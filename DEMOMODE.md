@@ -147,6 +147,13 @@ cj-demo simulate \
    * **Malformed**: park then drop (log both the append and the drop decision)
 5. At the end, take one final snapshot page and close the journal.
 
+The sample implementation injects two errors at the beginning of the run:
+
+* **Field 5** triggers a transient network failure. The payload is parked,
+  retried, and a `retry_success` log is appended when it commits.
+* **Field 10** sends a malformed packet which is logged and discarded before a
+  valid payload is written.
+
 ---
 
 ## 3. state: get DB state as-of a timestamp

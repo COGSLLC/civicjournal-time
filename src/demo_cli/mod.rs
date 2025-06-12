@@ -241,13 +241,69 @@ async fn simulate(
         let ts = start_ts + Duration::seconds(offset);
         let val: String = Sentence(1..2).fake();
         let payload = json!({ field_name: val });
-        let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64)?;
-        ts_queue.confirm_ticket(&ticket, true, None)?;
-        let res = journal
-            .append_leaf(ts, prev.clone(), container.to_string(), payload)
-            .await?;
-        if let PageContentHash::LeafHash(h) = res {
-            prev = Some(PageContentHash::LeafHash(h));
+        if i + 1 == 5 {
+            // malformed packet
+            if ts_queue.append("{", ts.timestamp() as u64).is_err() {
+                journal
+                    .append_leaf(
+                        ts,
+                        prev.clone(),
+                        container.to_string(),
+                        json!({"log":"malformed packet"}),
+                    )
+                    .await?;
+            }
+            let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64 + 1)?;
+            ts_queue.confirm_ticket(&ticket, true, None)?;
+            let res = journal
+                .append_leaf(ts + Duration::seconds(1), prev.clone(), container.to_string(), payload)
+                .await?;
+            if let PageContentHash::LeafHash(h) = res {
+                prev = Some(PageContentHash::LeafHash(h));
+            }
+        } else if i + 1 == 10 {
+            let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64)?;
+            ts_queue.confirm_ticket(&ticket, false, Some("network error"))?;
+            let res1 = journal
+                .append_leaf(
+                    ts,
+                    prev.clone(),
+                    container.to_string(),
+                    json!({"log":"network error"}),
+                )
+                .await?;
+            if let PageContentHash::LeafHash(h) = res1 {
+                prev = Some(PageContentHash::LeafHash(h));
+            }
+            ts_queue.retry_next_pending(|_, _, _| 1)?;
+            let res2 = journal
+                .append_leaf(
+                    ts + Duration::seconds(1),
+                    prev.clone(),
+                    container.to_string(),
+                    payload,
+                )
+                .await?;
+            if let PageContentHash::LeafHash(h) = res2 {
+                prev = Some(PageContentHash::LeafHash(h));
+            }
+            journal
+                .append_leaf(
+                    ts + Duration::seconds(2),
+                    prev.clone(),
+                    container.to_string(),
+                    json!({"log":"retry success"}),
+                )
+                .await?;
+        } else {
+            let ticket = ts_queue.append(&payload.to_string(), ts.timestamp() as u64)?;
+            ts_queue.confirm_ticket(&ticket, true, None)?;
+            let res = journal
+                .append_leaf(ts, prev.clone(), container.to_string(), payload)
+                .await?;
+            if let PageContentHash::LeafHash(h) = res {
+                prev = Some(PageContentHash::LeafHash(h));
+            }
         }
     }
     println!("Simulated {} fields over {}", fields, duration);
@@ -1320,7 +1376,15 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
             if let PageContentHash::LeafHash(h2) = res2 {
                 prev = Some(PageContentHash::LeafHash(h2));
             }
-            ts.confirm_ticket(&ticket, true, None)?;
+            ts.retry_next_pending(|_, _, _| 1)?;
+            journal
+                .append_leaf(
+                    event.ts + Duration::seconds(2),
+                    prev.clone(),
+                    container.to_string(),
+                    json!({"log":"retry success"}),
+                )
+                .await?;
         } else {
             ts.confirm_ticket(&ticket, true, None)?;
             let res = journal

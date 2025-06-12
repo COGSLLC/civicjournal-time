@@ -48,6 +48,17 @@ pub struct OrphanEvent {
     pub timestamp: u64,
 }
 
+/// A success event logged when a previously parked payload finally commits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuccessEvent {
+    /// Hash of the success log leaf
+    pub leaf_hash: String,
+    /// Hash of the payload that succeeded
+    pub orig_hash: String,
+    /// Timestamp of the original payload
+    pub timestamp: u64,
+}
+
 impl PendingEntry {
     fn new(prev_hash: String, payload_json: String, timestamp: u64) -> Self {
         PendingEntry {
@@ -68,6 +79,7 @@ pub struct Turnstile {
     pending: HashMap<String, PendingEntry>,
     committed: HashSet<String>,
     orphans: Vec<OrphanEvent>,
+    successes: Vec<SuccessEvent>,
     max_retries: u32,
     storage_path: Option<PathBuf>,
     log_orphans: bool,
@@ -79,6 +91,7 @@ struct PersistedState {
     pending: HashMap<String, PendingEntry>,
     committed: HashSet<String>,
     orphans: Vec<OrphanEvent>,
+    successes: Vec<SuccessEvent>,
 }
 
 impl Turnstile {
@@ -100,6 +113,7 @@ impl Turnstile {
             pending: HashMap::new(),
             committed: HashSet::new(),
             orphans: Vec::new(),
+            successes: Vec::new(),
             max_retries,
             storage_path,
             log_orphans,
@@ -132,6 +146,7 @@ impl Turnstile {
         self.pending = state.pending;
         self.committed = state.committed;
         self.orphans = state.orphans;
+        self.successes = state.successes;
         Ok(())
     }
 
@@ -143,6 +158,7 @@ impl Turnstile {
             pending: self.pending.clone(),
             committed: self.committed.clone(),
             orphans: self.orphans.clone(),
+            successes: self.successes.clone(),
         };
         let data = serde_json::to_vec(&state)?;
         fs::write(Self::state_file(path), data)?;
@@ -167,6 +183,27 @@ impl Turnstile {
             leaf_hash: orphan_hash,
             orig_hash: orig_hash.to_string(),
             error_msg: msg.to_string(),
+            timestamp,
+        });
+        Ok(())
+    }
+
+    fn log_success_leaf(&mut self, orig_hash: &str, timestamp: u64) -> CJResult<()> {
+        if !self.log_orphans {
+            return Ok(());
+        }
+        let json = serde_json::json!({
+            "type": "retry_success",
+            "orig_hash": orig_hash,
+            "timestamp": timestamp,
+        });
+        let json_str = json.to_string();
+        let success_hash = Self::compute_hash(&self.prev_leaf_hash, &json_str)?;
+        self.prev_leaf_hash = success_hash.clone();
+        self.committed.insert(success_hash.clone());
+        self.successes.push(SuccessEvent {
+            leaf_hash: success_hash,
+            orig_hash: orig_hash.to_string(),
             timestamp,
         });
         Ok(())
@@ -245,8 +282,10 @@ impl Turnstile {
             if rc == 1 {
                 entry.status = PendingStatus::Committed;
                 self.prev_leaf_hash = leaf_hash.clone();
-                self.committed.insert(leaf_hash);
+                self.committed.insert(leaf_hash.clone());
+                self.pending.remove(&leaf_hash);
                 self.persist_state()?;
+                self.log_success_leaf(&leaf_hash, timestamp)?;
                 return Ok(0);
             } else {
                 entry.retry_count += 1;
@@ -303,6 +342,11 @@ impl Turnstile {
     /// Access logged orphan events.
     pub fn orphan_events(&self) -> &[OrphanEvent] {
         &self.orphans
+    }
+
+    /// Access logged success events.
+    pub fn success_events(&self) -> &[SuccessEvent] {
+        &self.successes
     }
 }
 
