@@ -79,6 +79,12 @@ max_page_age_seconds = 0       # Age-based rollup disabled (finalize on activity
 content_type = "ChildHashesAndNetPatches"   # store hashes and optional net patch
 ```
 
+When a parent level is configured with `NetPatches`, its child level must also
+produce patch information (`ChildHashesAndNetPatches` or `NetPatches`).
+Otherwise the rollup will fail. The built-in default sets both the week and
+month levels to `ChildHashesAndNetPatches` so the year level (which stores only
+`NetPatches`) can aggregate data without errors.
+
 ### Retention Policies
 
 Retention policies control how long data is kept at each level:
