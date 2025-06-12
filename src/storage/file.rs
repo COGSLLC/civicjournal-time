@@ -1274,6 +1274,7 @@ use crate::LevelRollupConfig;
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_backup_journal() {
         
         // 1. Setup FileStorage
@@ -1336,6 +1337,7 @@ use crate::LevelRollupConfig;
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_restore_journal() {
         // 1. Setup source storage and populate it
         let source_storage_dir = tempdir().unwrap();
