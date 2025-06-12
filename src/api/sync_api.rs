@@ -15,7 +15,7 @@ pub struct Journal {
     manager: Arc<TimeHierarchyManager>,
     query: crate::query::QueryEngine,
     rt: Runtime, // Tokio runtime for executing async operations
-    last_leaf_hash: Arc<std::sync::Mutex<Option<[u8; 32]>>>,
+    pub last_leaf_hash: Arc<std::sync::Mutex<Option<[u8; 32]>>>,
 }
 
 impl Journal {
