@@ -39,6 +39,15 @@ pub use types::{
     LevelRollupConfig, TimeHierarchyConfig, TimeLevel,
 };
 
+/// Obtain the built-in default configuration.
+///
+/// This is handy for quick experiments or generating a template
+/// configuration file. The same values are used when no `config.toml`
+/// is found during [`init`].
+pub fn default_config() -> Config {
+    Config::default()
+}
+
 /// Global configuration instance
 static CONFIG: OnceLock<Config> = OnceLock::new();
 
