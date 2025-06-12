@@ -423,6 +423,8 @@ Returns 1 on success, 0 on rejection.
 If callback returned 1:
 
 CJT marks entry committed, updates prev_leaf_hash = leaf_hash_hex, and returns 0.
+It also appends a `retry_success` leaf referencing the committed hash so auditors
+can correlate the original failure with the eventual success.
 
 If callback returned 0:
 
