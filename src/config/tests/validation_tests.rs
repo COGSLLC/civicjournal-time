@@ -172,6 +172,12 @@ fn test_invalid_compression_level() {
 fn test_logging_config() {
     let mut config = create_test_config();
 
+    // Ensure the storage base path exists so validation doesn't fail
+    if config.storage.storage_type == StorageType::File {
+        std::fs::create_dir_all(&config.storage.base_path)
+            .expect("Failed to create storage base path for test_logging_config");
+    }
+
     // Test with file logging enabled but no file path
     config.logging.file = true;
     config.logging.file_path = "".to_string();
