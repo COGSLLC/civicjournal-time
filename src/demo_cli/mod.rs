@@ -133,19 +133,7 @@ pub enum PageCmd {
 
 pub async fn run() -> CJResult<()> {
     let cli = Cli::parse();
-    let base = init(None)?;
-    // Clone and modify the configuration so demo pages finalize on time-based
-    // boundaries (day -> week -> month -> year). Also store a net patch on
-    // day-level pages so higher levels can aggregate correctly.
-    let mut cfg = base.clone();
-    for lvl in &mut cfg.time_hierarchy.levels {
-        lvl.rollup_config.max_page_age_seconds = lvl.duration_seconds;
-        if lvl.name == "day" {
-            lvl.rollup_config.content_type =
-                crate::types::time::RollupContentType::ChildHashesAndNetPatches;
-        }
-    }
-    let config: &'static crate::Config = Box::leak(Box::new(cfg));
+    let config = init(None)?;
     match cli.command.unwrap_or(Commands::Demo) {
         Commands::Demo => run_demo(&config).await?,
         Commands::Cleanup => {
@@ -492,14 +480,12 @@ async fn list_pages(journal: &Journal, level: u32) -> CJResult<()> {
         .await?;
     pages.sort_by_key(|p| p.page_id);
     for p in pages {
-        if let Some(page) = journal
-            .query
-            .storage()
-            .load_page(p.level, p.page_id)
-            .await?
-        {
-            println!("{} (L{}P{})", page_label(&page), page.level, page.page_id);
-        }
+        println!(
+            "L{}P{} {}",
+            p.level,
+            p.page_id,
+            p.creation_timestamp.to_rfc3339()
+        );
     }
     Ok(())
 }
@@ -513,7 +499,7 @@ async fn show_page(journal: &Journal, page_id: u64, raw: bool) -> CJResult<()> {
                     serde_json::to_string_pretty(&page).unwrap_or_default()
                 );
             } else {
-                println!("{} (L{}P{})", page_label(&page), page.level, page.page_id);
+                println!("Page L{}P{}", page.level, page.page_id);
                 println!("Start: {}", page.creation_timestamp.to_rfc3339());
                 println!("End: {}", page.end_time.to_rfc3339());
                 let prev = page
@@ -685,28 +671,6 @@ fn parse_fuzzy_datetime(input: &str) -> Option<DateTime<Utc>> {
     let date = NaiveDate::from_ymd_opt(year, month, day)?;
     let dt = date.and_hms_opt(hour, minute, second)?;
     Some(DateTime::<Utc>::from_utc(dt, Utc))
-}
-
-fn page_label(page: &crate::core::page::JournalPage) -> String {
-    use chrono::Datelike;
-    match page.level {
-        0 => page
-            .creation_timestamp
-            .format("%-d%b%Y")
-            .to_string()
-            .to_uppercase(),
-        1 => {
-            let iso = page.creation_timestamp.iso_week();
-            format!("W{}{}", iso.week(), iso.year())
-        }
-        2 => page
-            .creation_timestamp
-            .format("%b%Y")
-            .to_string()
-            .to_uppercase(),
-        3 => page.creation_timestamp.format("%Y").to_string(),
-        _ => format!("L{}P{}", page.level, page.page_id),
-    }
 }
 
 fn show_help(stdout: &mut io::Stdout) -> io::Result<()> {
@@ -907,7 +871,7 @@ async fn log_viewer_prompt(journal: &Journal, container: &str) -> CJResult<()> {
         writeln!(stdout, "[← prev] [→ next] [Q quit]")?;
         execute!(stdout, SetForegroundColor(Color::White))?;
         stdout.flush()?;
-        if event::poll(StdDuration::from_millis(50))? {
+        if event::poll(StdDuration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                     match key.code {
@@ -978,13 +942,7 @@ async fn render_nav(
         let leaf = &leaves[idx];
         if let Some(page) = find_page_for_ts(journal, level, leaf.timestamp).await? {
             writeln!(stdout, "Container: {}", container)?;
-            writeln!(
-                stdout,
-                "{} (L{}P{})",
-                page_label(&page),
-                page.level,
-                page.page_id
-            )?;
+            writeln!(stdout, "Page L{}P{}", page.level, page.page_id)?;
             execute!(stdout, SetForegroundColor(Color::Grey))?;
             writeln!(stdout, "[← prev] [→ next]  [↑ parent] [↓ child]")?;
             execute!(stdout, SetForegroundColor(Color::White))?;
@@ -1085,7 +1043,7 @@ async fn nav_cmd(
             render_nav(&mut stdout, container, *level, *idx, &leaves, journal).await?;
             needs_render = false;
         }
-        if event::poll(StdDuration::from_millis(50))? {
+        if event::poll(StdDuration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                     match key.code {
@@ -1208,7 +1166,7 @@ async fn demo_app(journal: &Journal, container: &str) -> CJResult<()> {
             render_menu(&mut stdout)?;
             needs_render = false;
         }
-        if event::poll(StdDuration::from_millis(50))? {
+        if event::poll(StdDuration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                     match key.code {
@@ -1316,13 +1274,14 @@ async fn generate_demo_data(journal: &Journal, container: &str) -> CJResult<()> 
         )
     }
 
-    const DAYS: usize = 365;
+    const UPDATES_PER_FIELD: usize = 100;
 
-    for day in 0..DAYS {
-        for i in 0..10 {
-            let field = format!("field{}", i + 1);
+    for i in 0..10 {
+        let field = format!("field{}", i + 1);
+        for _ in 0..UPDATES_PER_FIELD {
+            let day_offset = rng.gen_range(0..365) as i64;
             let day_seconds = rng.gen_range(8 * 3600..18 * 3600) as i64;
-            let ts = start + Duration::days(day as i64) + Duration::seconds(day_seconds);
+            let ts = start + Duration::days(day_offset) + Duration::seconds(day_seconds);
             update_counts[i] += 1;
             let value = field_message(i, update_counts[i]);
             events.push(DemoEvent {
